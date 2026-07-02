@@ -8,10 +8,16 @@ NIE trzeba już wklejać ciasteczek. Pierwsze uruchomienie interaktywnie zaloguj
 DOMYŚLNIE DRY-RUN. Realnie wystawia dopiero z flagą --sell.
 --noninteractive: tryb cron (nie czeka na logowanie, tylko alertuje na TG).
 Zależność: requests, steam_auth (protobuf==3.20.3, steam).
+
+Kluczowe kroki są funkcjami (używa ich też GUI — steam_seller_gui.py):
+make_session / fetch_inventory / marketable_items / pick_duplicates /
+fetch_price / sell_item.
 """
 import argparse, os, re, sys, time
+from collections import Counter
 import requests
 import steam_auth
+
 
 def buyer_price_to_receive(buyer_cents: int) -> int:
     """Ile dostajesz, by kupujący zapłacił <= buyer_cents (prowizja Steam ~15%, min 1+1)."""
@@ -31,10 +37,82 @@ def parse_price(s: str) -> int:
     return int(m.group(1)) * 100 if m else 0
 
 
+def make_session(cookies):
+    """requests.Session z ciasteczkami i nagłówkami wymaganymi przez inventory/market.
+
+    `cookies` = wynik steam_auth.get_cookies(). Referer jest OBOWIĄZKOWY dla
+    endpointu ekwipunku.
+    """
+    s = requests.Session()
+    s.cookies.update({'steamLoginSecure': cookies['steamLoginSecure'],
+                      'sessionid': cookies['sessionid']})
+    s.headers.update({'User-Agent': 'Mozilla/5.0',
+                      'Referer': f"https://steamcommunity.com/profiles/{cookies['_steamid']}/inventory",
+                      'X-Requested-With': 'XMLHttpRequest'})
+    return s
+
+
+def fetch_inventory(s, steamid, appid, contextid):
+    """Pobiera ekwipunek (JSON). count max 2000 dla tego endpointu (5000 -> HTTP 400)."""
+    return s.get(f"https://steamcommunity.com/inventory/{steamid}/{appid}/{contextid}",
+                 params={'l': 'english', 'count': 2000}, timeout=30).json()
+
+
+def marketable_items(inv, types):
+    """Lista {'assetid','name'} marketable przedmiotów pasujących do filtra typów.
+
+    `types` jak w --types: nazwy po przecinku, pusty string = wszystkie marketable.
+    """
+    desc = {(d['classid'], d['instanceid']): d for d in inv['descriptions']}
+    wanted = [t.strip() for t in types.split(',') if t.strip()]  # pusty = bez filtra typu
+    items = []
+    for a in inv['assets']:
+        d = desc[(a['classid'], a['instanceid'])]
+        typ = d.get('type', '')
+        if d.get('marketable') and (not wanted or any(w in typ for w in wanted)):
+            items.append({'assetid': a['assetid'], 'name': d['market_hash_name']})
+    return items
+
+
+def pick_duplicates(items):
+    """Nadmiar ponad 1 sztukę każdego rodzaju -> (Counter po nazwie, lista do sprzedania)."""
+    counts = Counter(c['name'] for c in items)
+    seen, to_sell = Counter(), []
+    for c in items:
+        if seen[c['name']] < counts[c['name']] - 1:   # zostaw jeden z każdego rodzaju
+            to_sell.append(c); seen[c['name']] += 1
+    return counts, to_sell
+
+
+def fetch_price(s, appid, name, currency):
+    """priceoverview -> cena kupującego w groszach (0 = brak oferty na rynku).
+
+    Ostro rate-limitowane (~20 żądań/min) — wołający MUSI trzymać odstęp (--delay).
+    """
+    r = s.get("https://steamcommunity.com/market/priceoverview/",
+              params={'appid': appid, 'market_hash_name': name, 'currency': currency},
+              timeout=30).json()
+    return parse_price(r['lowest_price']) if r.get('lowest_price') else 0
+
+
+def sell_item(s, sessionid, steamid, appid, contextid, assetid, receive_cents):
+    """POST /market/sellitem — jedna oferta. Zwraca surową odpowiedź JSON Steam."""
+    return s.post("https://steamcommunity.com/market/sellitem/",
+                  data={'sessionid': sessionid, 'appid': appid, 'contextid': contextid,
+                        'assetid': assetid, 'amount': 1, 'price': receive_cents},
+                  headers={'Referer': f"https://steamcommunity.com/profiles/{steamid}/inventory"},
+                  timeout=30).json()
+
+
 def selftest():
     assert buyer_price_to_receive(4) == 2, buyer_price_to_receive(4)
     assert buyer_price_to_receive(100) == 88, buyer_price_to_receive(100)
     assert parse_price('0,04 zł') == 4 and parse_price('$1.23') == 123
+    items = [{'assetid': '1', 'name': 'A'}, {'assetid': '2', 'name': 'A'},
+             {'assetid': '3', 'name': 'A'}, {'assetid': '4', 'name': 'B'}]
+    counts, to_sell = pick_duplicates(items)
+    assert counts == Counter({'A': 3, 'B': 1})
+    assert [c['assetid'] for c in to_sell] == ['1', '2'], to_sell  # zostaje 1×A i 1×B
     print("selftest OK")
 
 
@@ -60,33 +138,14 @@ def main():
     steamid = ck['_steamid']
     session = ck['sessionid']
 
-    s = requests.Session()
-    s.cookies.update({'steamLoginSecure': ck['steamLoginSecure'], 'sessionid': session})
-    s.headers.update({'User-Agent': 'Mozilla/5.0',
-                      'Referer': f"https://steamcommunity.com/profiles/{steamid}/inventory",
-                      'X-Requested-With': 'XMLHttpRequest'})
+    s = make_session(ck)
 
-    # --- inventory (count max 2000 dla tego endpointu) ---
-    inv = s.get(f"https://steamcommunity.com/inventory/{steamid}/{appid}/{contextid}",
-                params={'l': 'english', 'count': 2000}, timeout=30).json()
+    inv = fetch_inventory(s, steamid, appid, contextid)
     if not inv or not inv.get('assets'):
         sys.exit("Pusty/niedostępny inventory — sprawdź ciasteczka (mogły wygasnąć).")
-    desc = {(d['classid'], d['instanceid']): d for d in inv['descriptions']}
 
-    wanted = [t.strip() for t in args.types.split(',') if t.strip()]  # pusty = bez filtra typu
-    cards = []
-    for a in inv['assets']:
-        d = desc[(a['classid'], a['instanceid'])]
-        typ = d.get('type', '')
-        if d.get('marketable') and (not wanted or any(w in typ for w in wanted)):
-            cards.append({'assetid': a['assetid'], 'name': d['market_hash_name']})
-
-    from collections import Counter
-    counts = Counter(c['name'] for c in cards)
-    seen, to_sell = Counter(), []
-    for c in cards:
-        if seen[c['name']] < counts[c['name']] - 1:   # zostaw jeden z każdego rodzaju
-            to_sell.append(c); seen[c['name']] += 1
+    cards = marketable_items(inv, args.types)
+    counts, to_sell = pick_duplicates(cards)
 
     print(f"Przedmiotów: {len(cards)}, rodzajów: {len(counts)}, duplikatów do sprzedania: {len(to_sell)}")
 
@@ -94,10 +153,7 @@ def main():
     for c in to_sell:
         name = c['name']
         if name not in price_cache:
-            r = s.get("https://steamcommunity.com/market/priceoverview/",
-                      params={'appid': appid, 'market_hash_name': name, 'currency': args.currency},
-                      timeout=30).json()
-            price_cache[name] = parse_price(r['lowest_price']) if r.get('lowest_price') else 0
+            price_cache[name] = fetch_price(s, appid, name, args.currency)
             time.sleep(args.delay)  # ponytail: stały odstęp, priceoverview ~20 żądań/min
         buyer = price_cache[name] - args.undercut
         receive = buyer_price_to_receive(buyer)
@@ -108,11 +164,7 @@ def main():
         if not args.sell:
             print(line + " [dry-run]"); continue
 
-        resp = s.post("https://steamcommunity.com/market/sellitem/",
-                      data={'sessionid': session, 'appid': appid, 'contextid': contextid,
-                            'assetid': c['assetid'], 'amount': 1, 'price': receive},
-                      headers={'Referer': f"https://steamcommunity.com/profiles/{steamid}/inventory"},
-                      timeout=30).json()
+        resp = sell_item(s, session, steamid, appid, contextid, c['assetid'], receive)
         ok = resp.get('success')
         print(line + (" ✓ wystawione (potwierdź w apce)" if ok else f" ✗ {resp.get('message', resp)}"))
         time.sleep(args.delay)

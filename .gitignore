@@ -1,4 +1,9 @@
 steam-seller-venv/
+venv/
 __pycache__/
 *.pyc
 .steam_refresh_token
+# PyInstaller
+build/
+dist/
+*.spec

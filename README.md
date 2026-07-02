@@ -13,9 +13,13 @@ Konto: **KrecikT0K0x** (steamid `76561199087363689`).
 
 | Plik | Rola |
 |------|------|
-| `steam_dupe_seller.py` | logika: pobranie ekwipunku → wybór duplikatów → wycena → wystawienie |
+| `steam_dupe_seller.py` | logika: pobranie ekwipunku → wybór duplikatów → wycena → wystawienie (funkcje importowalne — używa ich też GUI) |
 | `steam_auth.py` | sesja web Steam bez ręcznego wklejania ciasteczek (refresh token) |
-| `requirements.txt` | `requests`, `rsa`, `protobuf==3.20.3`, `steam` |
+| `steam_seller_gui.py` | aplikacja okienkowa (PySide6) — nakładka na powyższe, patrz [Aplikacja Windows](#aplikacja-windows-gui--exe) |
+| `gui_theme.py` | ciemny motyw QSS dla GUI |
+| `tiny_qr.py` | minimalny generator QR (zero zależności) — rysuje kod logowania w GUI |
+| `build.bat` / `app.ico` | build `SteamDupeSeller.exe` (PyInstaller) |
+| `requirements.txt` | `requests`, `rsa`, `protobuf==3.20.3`, `steam`, `PySide6`, `pyinstaller` |
 
 ## Instalacja
 
@@ -33,6 +37,11 @@ steam-seller-venv/bin/pip install -r requirements.txt
 Sesja web bierze się z **refresh tokenu** trzymanego w `~/.steam_refresh_token` (chmod 600,
 ważny wiele miesięcy). Z tokenu po cichu generowane jest ciasteczko `steamLoginSecure`
 kanonicznym flow przeglądarki: `login.steampowered.com/jwt/finalizelogin` → `settoken`.
+
+Ścieżka pliku tokenu jest konfigurowalna: env **`STEAM_TOKEN_FILE`** albo
+`steam_auth.set_token_path()` z kodu. Bez tego zostaje linuksowy domyślny
+`~/.steam_refresh_token` (CLI działa jak dotąd); GUI na Windowsie przestawia ją na
+`%APPDATA%\SteamDupeSeller\refresh_token`.
 
 Gdy tokenu brak lub wygasł:
 
@@ -90,6 +99,61 @@ steam-seller-venv/bin/python steam_dupe_seller.py --sell
 `priceoverview` zwraca najniższą ofertę rynku. Funkcja `buyer_price_to_receive()` odejmuje
 **prowizję Steam ~15%** (min 1 gr Steam + 1 gr twórcy gry), żeby wyliczyć ile masz dostać,
 by kupujący zapłacił nie więcej niż aktualny lowest price. Ceny są cache'owane po nazwie.
+
+## Aplikacja Windows (GUI + .exe)
+
+Okienkowa nakładka na tę samą logikę (GUI **woła** funkcje z `steam_dupe_seller.py` /
+`steam_auth.py`, niczego nie duplikuje). Ciemny motyw, tabela duplikatów z checkboxami,
+wycena w tle z progresem, dry-run i realne wystawianie z potwierdzeniem.
+
+### Uruchomienie z venv (Windows lub Linux)
+
+```bash
+python -m venv venv
+venv/bin/pip install -r requirements.txt        # Windows: venv\Scripts\pip
+venv/bin/python steam_seller_gui.py             # Windows: venv\Scripts\python
+```
+
+### Build `SteamDupeSeller.exe`
+
+Na Windowsie z Pythonem 3.10+ w PATH:
+
+```bat
+build.bat
+```
+
+Wynik: `dist\SteamDupeSeller.exe` — pojedynczy plik, bez konsoli, z ikoną. Ręcznie:
+
+```bat
+pyinstaller --onefile --windowed --icon app.ico --name SteamDupeSeller ^
+    --add-data "app.ico;." --collect-submodules steam.protobufs steam_seller_gui.py
+```
+
+**Pułapki buildu:**
+
+- Pakiet `steam` (ValvePython) ładuje protobufy dynamicznie — bez
+  `--collect-submodules steam.protobufs` w gotowym .exe zabraknie
+  `steammessages_auth_pb2` i logowanie się wysypie. `build.bat` już to ma.
+- Zostaw pin **`protobuf==3.20.3`** (nowszy psuje wygenerowane `*_pb2` z pakietu `steam`).
+- Gotowy .exe przetestuj na czystym Windowsie (bez Pythona): logowanie push
+  **i** wczytanie ekwipunku muszą działać.
+
+### Jak to działa na Windowsie
+
+- **Refresh token** ląduje w `%APPDATA%\SteamDupeSeller\refresh_token`
+  (nie ma tu `/etc/skynet/secrets` ani linuksowego `$HOME`).
+- **Logowanie push**: GUI pyta o login+hasło i przekazuje je prosto do
+  `credentials_login()` (RSA → push do apki Steam Mobile). Hasło **nie jest zapisywane** —
+  trzymany jest wyłącznie refresh token.
+- **Logowanie QR**: GUI rysuje kod QR (własny mini-generator `tiny_qr.py`,
+  zweryfikowany bit-w-bit z referencyjnym enkoderem) — skanujesz go w apce Steam:
+  Steam Guard → „Zeskanuj kod QR". Linku nie da się „kliknąć".
+- **Telegram opcjonalny**: bez `TG_TOKEN`/`TG_CHAT_ID` powiadomienia są po prostu
+  pomijane — wszystko widać w logu GUI.
+- Wycena i wystawianie lecą w wątkach roboczych (GUI nie zamarza), z odstępem
+  `Odstęp` między żądaniami (priceoverview ~20 żądań/min).
+- Po wystawieniu ofert GUI przypomina: **apka Steam Mobile → Potwierdzenia →
+  Zatwierdź wszystko** (bot nie ma `identity_secret`, nie potwierdza sam).
 
 ## Automatyzacja (cron)
 

@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🃏 Steam Dupe Seller
+# 🏷️ Steam Dupe Seller
 
 **Wystawia duplikaty kart i przedmiotów Steam na rynku — zawsze zostawiając po jednej sztuce każdego rodzaju.**
 

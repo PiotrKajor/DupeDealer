@@ -1,53 +1,72 @@
-# Steam Dupe Seller
+<div align="center">
 
-Wystawia **duplikaty kart Steam** (i innych marketable przedmiotów) na rynku Steam —
-grupuje ekwipunek po `market_hash_name` i wystawia nadmiar, **zawsze zostawiając po 1 sztuce
-każdego rodzaju**. Czyste `requests`, bez przeglądarki.
+# 🃏 Steam Dupe Seller
 
-Dwa warianty: **aplikacja okienkowa Windows** (ciemne GUI, gotowy `.exe`) oraz **skrypt CLI**
-(Linux/cron). Oferty potwierdzasz **ręcznie w apce Steam Mobile** — bot ich nie zatwierdza.
+**Wystawia duplikaty kart i przedmiotów Steam na rynku — zawsze zostawiając po jednej sztuce każdego rodzaju.**
 
-**➡️ Pobierz gotowy `.exe`: [Releases](../../releases/latest)**
+Aplikacja okienkowa na Windows (ciemne GUI) i skrypt CLI. Bez przeglądarki, na czystym `requests`.
+
+[![Pobierz .exe](https://img.shields.io/badge/Pobierz-SteamDupeSeller.exe-4fb4ff?style=for-the-badge)](../../releases/latest)
+&nbsp;
+![Platforma](https://img.shields.io/badge/Windows-64--bit-2a3245?style=for-the-badge)
+&nbsp;
+![Licencja](https://img.shields.io/badge/licencja-MIT-3ddc84?style=for-the-badge)
 
 ![Zrzut ekranu aplikacji](docs/screenshot.png)
 
-> ⚠️ **Zastrzeżenie.** Automatyzacja rynku Steam może naruszać
-> [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/).
-> Korzystasz na **własną odpowiedzialność i ryzyko** (możliwy ban konta lub rynku).
-> Projekt edukacyjny, dostarczany „as is", bez żadnej gwarancji. Nie podawaj danych
-> logowania na maszynach, którym nie ufasz.
+</div>
+
+> [!WARNING]
+> **Korzystasz na własną odpowiedzialność.** Automatyzacja rynku Steam może naruszać
+> [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/) i grozić
+> ograniczeniem konta lub rynku. Projekt edukacyjny, dostarczany „as is", bez gwarancji.
+> Nie podawaj danych logowania na maszynach, którym nie ufasz.
 
 ---
+
+## Co to robi
+
+Masz w ekwipunku Steam dziesiątki powtórzonych kart? Ten program grupuje przedmioty po
+`market_hash_name`, **zostawia po jednej sztuce każdego rodzaju**, a resztę wystawia na rynku
+po cenie wyliczonej z aktualnych ofert. Oferty **potwierdzasz sam** w apce Steam Mobile —
+bot nigdy nie robi tego za Ciebie.
+
+**Przebieg:**
+
+1. Logujesz się (push do apki Steam albo kod QR) — bez ręcznego wklejania ciasteczek.
+2. Wczytujesz ekwipunek i widzisz tabelę duplikatów z ceną rynku i kwotą „dostajesz".
+3. Zaznaczasz, co wystawić, robisz podgląd (dry-run) albo realnie wystawiasz.
+4. Wchodzisz do apki Steam Mobile → **Potwierdzenia → Zatwierdź wszystko**.
 
 ## Funkcje
 
-- **Zawsze zostawia 1 sztukę** każdego rodzaju — wystawia tylko duplikaty.
-- **Ciemne GUI** (PySide6): status logowania, sortowalna tabela duplikatów z checkboxami,
-  wycena w tle z paskiem postępu, podgląd (dry-run) i realne wystawianie z potwierdzeniem.
-- **Logowanie bez wklejania ciasteczek**: push do apki Steam Mobile albo kod QR;
-  sesja odtwarzana po cichu z refresh tokenu (ważny wiele miesięcy).
-- **Wiele ekwipunków**: karty (753/6), TF2 (440/2), CS2 (730/2), Dota 2 (570/2) + filtr typów.
-- **Wycena z rynku** (`priceoverview`) z odjęciem prowizji Steam (~15%) i opcją *undercut*.
-- **Ten sam silnik w CLI** — nadaje się do crona; `--selftest` pilnuje logiki.
-
-## Jak to działa
-
-1. Pobiera ekwipunek (`/inventory/<steamid>/<appid>/<contextid>`, nagłówek `Referer`, `count≤2000`).
-2. Grupuje po `market_hash_name`, wybiera nadmiar ponad 1 sztukę.
-3. Wycenia każdy rodzaj przez `priceoverview` i liczy, ile masz *dostać*, by kupujący
-   zapłacił nie więcej niż aktualny lowest price (prowizja Steam ~15%, min 1 gr + 1 gr).
-4. Wystawia oferty (`sellitem`). **Potwierdzasz je ręcznie** w apce Steam Mobile
-   (Potwierdzenia → Zatwierdź wszystko) — konto z samym mobilnym authenticatorem nie ma
-   `identity_secret`, więc bot nie potwierdza automatycznie.
+- ✅ **Bezpieczna logika** — zawsze zostawia 1 sztukę rodzaju, wystawia tylko nadmiar.
+- 🖥️ **Nowoczesne GUI** (PySide6, ciemny motyw): sortowalna tabela z checkboxami, wycena
+  w tle z paskiem postępu, podgląd i wystawianie z potwierdzeniem.
+- 🔐 **Logowanie bez ciasteczek** — push do apki albo kod QR; sesja odtwarzana po cichu
+  z refresh tokenu (ważny wiele miesięcy).
+- 🎮 **Wiele ekwipunków** — karty (753/6), TF2 (440/2), CS2 (730/2), Dota 2 (570/2) + filtr typów.
+- 💰 **Wycena z rynku** (`priceoverview`) z odjęciem prowizji Steam (~15%) i opcją *undercut*.
+- 🧪 **Ten sam silnik w CLI** — dobry do crona; wbudowany `--selftest`.
 
 ---
 
-## Aplikacja Windows
+## Szybki start (Windows)
 
-Najprościej: pobierz **`SteamDupeSeller.exe`** z [Releases](../../releases/latest) i uruchom
-(plik nie jest podpisany — SmartScreen może ostrzec: „Więcej informacji" → „Uruchom mimo to").
+1. Pobierz **`SteamDupeSeller.exe`** z [zakładki Releases](../../releases/latest).
+2. Uruchom. Plik nie jest podpisany, więc SmartScreen może ostrzec —
+   „Więcej informacji" → „Uruchom mimo to".
+3. **Zaloguj (push w apce)** lub **Zaloguj (QR)** i zatwierdź logowanie w telefonie.
+4. Wybierz ekwipunek → **Wczytaj ekwipunek**, poczekaj na wycenę.
+5. Zaznacz pozycje → **Podgląd** (nic nie robi) lub **Wystaw zaznaczone**.
+6. Zatwierdź oferty w apce Steam Mobile (Potwierdzenia → Zatwierdź wszystko).
 
-### Uruchomienie ze źródeł (Windows lub Linux)
+Token logowania zapisze się w `%APPDATA%\SteamDupeSeller\refresh_token`.
+Hasło nie jest zapisywane nigdzie na dysku.
+
+## Uruchomienie ze źródeł
+
+Działa tak samo na Windows i Linux:
 
 ```bash
 python -m venv venv
@@ -55,81 +74,37 @@ venv/bin/pip install -r requirements.txt        # Windows: venv\Scripts\pip
 venv/bin/python steam_seller_gui.py             # Windows: venv\Scripts\python
 ```
 
-### Build `.exe`
+### Zbudowanie własnego `.exe`
 
-Na Windowsie z Pythonem 3.10+ w PATH:
+Na Windowsie z Pythonem 3.10+ w PATH wystarczy:
 
 ```bat
 build.bat
 ```
 
-Wynik: `dist\SteamDupeSeller.exe` (onefile, bez konsoli, z ikoną). Ręcznie:
+Wynik: `dist\SteamDupeSeller.exe` (jeden plik, bez konsoli). Ręczny odpowiednik:
 
 ```bat
 pyinstaller --onefile --windowed --icon app.ico --name SteamDupeSeller ^
     --add-data "app.ico;." --collect-submodules steam.protobufs steam_seller_gui.py
 ```
 
-Buildy release'owe robi też GitHub Actions (`.github/workflows/release.yml`) — po pushu
-taga `v*` albo ręcznie z zakładki *Actions*.
+Wersje release'owe buduje GitHub Actions (`.github/workflows/release.yml`) po pushu taga `v*`.
 
-**Pułapki buildu:**
-
-- Pakiet `steam` (ValvePython) ładuje protobufy dynamicznie — bez
-  `--collect-submodules steam.protobufs` w gotowym `.exe` zabraknie
-  `steammessages_auth_pb2` i logowanie się wysypie.
-- Zostaw pin **`protobuf==3.20.3`** (nowszy nie ma `google.protobuf.service`,
-  którego wymagają wygenerowane `*_pb2` z pakietu `steam`).
-- Gotowy `.exe` przetestuj na czystym Windowsie (bez Pythona): logowanie push **i**
-  wczytanie ekwipunku muszą działać.
-
-### Gdzie ląduje token (Windows)
-
-- **Refresh token**: `%APPDATA%\SteamDupeSeller\refresh_token`.
-- **Login/hasło** wpisujesz w okienku logowania — **nie są zapisywane na dysk**,
-  idą tylko do zaszyfrowanego (RSA) logowania, po czym zostaje sam refresh token.
-- **Powiadomienia Telegram** są opcjonalne — bez `TG_TOKEN`/`TG_CHAT_ID` po prostu pomijane.
+> **Dlaczego `--collect-submodules steam.protobufs`?** Pakiet `steam` ładuje protobufy
+> dynamicznie — bez tego w gotowym `.exe` zabraknie `steammessages_auth_pb2` i logowanie
+> się wysypie. Zostaw też pin **`protobuf==3.20.3`** (nowszy nie ma `google.protobuf.service`,
+> którego wymagają wygenerowane `*_pb2`).
 
 ---
 
-## Skrypt CLI
+## Wariant CLI
 
-### Instalacja
-
-```bash
-python3 -m venv steam-seller-venv
-steam-seller-venv/bin/pip install -r requirements.txt
-```
-
-### Logowanie (`steam_auth.py`)
-
-Sesja web bierze się z **refresh tokenu** (domyślnie `~/.steam_refresh_token`, chmod 600).
-Z tokenu po cichu generowane jest ciasteczko `steamLoginSecure` kanonicznym flow przeglądarki
-(`login.steampowered.com/jwt/finalizelogin` → `settoken`). Ścieżkę tokenu zmieniasz przez env
-**`STEAM_TOKEN_FILE`**.
-
-Gdy tokenu brak lub wygasł:
+**Domyślnie dry-run** — realnie wystawia dopiero z `--sell`.
 
 ```bash
-steam-seller-venv/bin/python steam_auth.py --login   # login+hasło → push „Zatwierdź" w apce
-steam-seller-venv/bin/python steam_auth.py --qr      # kod do ZESKANOWANIA w apce (nie klikać!)
-steam-seller-venv/bin/python steam_auth.py --cookie  # debug: wypisz aktualne ciasteczka
-```
-
-- **`--login`**: login/hasło ze zmiennych env `STEAM_LOGIN`/`STEAM_PASSWORD` (albo z pliku
-  wskazanego przez `STEAM_SECRETS_FILE`, format `KEY=VALUE`) → RSA → `BeginAuthSessionViaCredentials`
-  → Steam wysyła **push do apki**, klikasz Zatwierdź → `PollAuthSessionStatus` łapie token.
-- **`--qr`**: link `s.team/q/...` (opcjonalnie wysyłany też na Telegram). Trzeba go
-  **zeskanować** aparatem w apce — kliknięcie linku nie loguje.
-
-### Uruchomienie (`steam_dupe_seller.py`)
-
-**Domyślnie dry-run.** Realnie wystawia dopiero z `--sell`.
-
-```bash
-steam-seller-venv/bin/python steam_dupe_seller.py           # podgląd (nic nie robi)
-steam-seller-venv/bin/python steam_dupe_seller.py --sell    # realne wystawienie
-# potem: apka Steam Mobile → Potwierdzenia → Zatwierdź wszystko
+python steam_dupe_seller.py            # podgląd: co i za ile by wystawił
+python steam_dupe_seller.py --sell     # realne wystawienie duplikatów
 ```
 
 | Flaga | Domyślnie | Opis |
@@ -140,45 +115,56 @@ steam-seller-venv/bin/python steam_dupe_seller.py --sell    # realne wystawienie
 | `--currency` | `6` | waluta wyceny: `6`=PLN, `3`=EUR, `1`=USD |
 | `--undercut` | `0` | o ile groszy zejść poniżej ceny kupującego |
 | `--delay` | `3.5` | przerwa między żądaniami (s) — Steam mocno rate-limituje |
-| `--noninteractive` | off | tryb cron: gdy logowanie wygasło → alert (opcjonalny TG) i wyjście |
+| `--noninteractive` | off | tryb cron: gdy logowanie wygasło → wyjście (opcjonalny alert Telegram) |
 | `--selftest` | — | testy jednostkowe wyceny/parsera i wyjście |
 
-### Automatyzacja (cron)
+Logowanie z linii poleceń: `python steam_auth.py --login` (push) lub `--qr` (kod do zeskanowania).
+
+Przykład crona (tygodniowo, bez blokowania na logowanie):
 
 ```cron
-# tygodniowo w niedzielę 12:00, tryb bez blokowania (podmień ścieżkę na swoją)
-0 12 * * 0 cd ~/steam-dupe-seller && steam-seller-venv/bin/python steam_dupe_seller.py --sell --noninteractive
+0 12 * * 0 cd ~/steam-dupe-seller && venv/bin/python steam_dupe_seller.py --sell --noninteractive
 ```
 
----
+## Konfiguracja (zmienne środowiskowe)
 
-## Struktura
+Wszystko jest opcjonalne — w GUI dane logowania wpisujesz w okienku.
 
-| Plik | Rola |
-|------|------|
-| `steam_dupe_seller.py` | logika: ekwipunek → duplikaty → wycena → wystawienie (funkcje importowalne, wołane też przez GUI) |
-| `steam_auth.py` | sesja web Steam z refresh tokenu (push / QR), bez wklejania ciasteczek |
-| `steam_seller_gui.py` | aplikacja okienkowa (PySide6) |
-| `gui_theme.py` | ciemny motyw QSS |
-| `tiny_qr.py` | mini-generator QR bez zależności (kod logowania QR w GUI) |
-| `build.bat`, `app.ico`, `.github/workflows/release.yml` | pakowanie `.exe` i publikacja w Releases |
+| Zmienna | Rola |
+|---------|------|
+| `STEAM_LOGIN`, `STEAM_PASSWORD` | dane do logowania `--login` (dla CLI/crona) |
+| `STEAM_TOKEN_FILE` | ścieżka pliku refresh tokenu (dom. `~/.steam_refresh_token`; Windows GUI: `%APPDATA%\SteamDupeSeller\`) |
+| `STEAM_SECRETS_FILE` | opcjonalny plik `KEY=VALUE` z powyższymi sekretami |
+| `TG_TOKEN`, `TG_CHAT_ID` | opcjonalne powiadomienia Telegram (bez nich po prostu pomijane) |
 
-### Pułapki (dla rozwijających)
+## Jak liczona jest cena
 
-- `GetPasswordRSAPublicKey` to **GET** (param w query), reszta `Begin*/Poll*` to POST.
-- `GenerateAccessTokenForApp` **nie działa** dla web (eresult 15) — stąd droga przez `finalizelogin`.
-- `persistence=1` podać **liczbą**; `platform_type = WebBrowser (2)`, `os_type = -500`.
-- Endpoint ekwipunku wymaga nagłówka **`Referer`** i `count` **≤ 2000** (5000 → HTTP 400).
-- `priceoverview` jest ostro rate-limitowane (~20 żądań/min) → trzymaj `--delay`/`Odstęp`.
+`priceoverview` zwraca najniższą aktualną ofertę. Funkcja `buyer_price_to_receive()` odejmuje
+**prowizję Steam (~15%**, min. 1 gr dla Steam + 1 gr dla twórcy gry), by wyliczyć kwotę, jaką
+masz *dostać*, żeby kupujący zapłacił nie więcej niż obecny lowest price. Z opcją *undercut*
+schodzisz jeszcze o kilka groszy poniżej. Ceny są cache'owane po nazwie przedmiotu.
 
 ## Bezpieczeństwo
 
-- Refresh token (`~/.steam_refresh_token`, na Windowsie `%APPDATA%\SteamDupeSeller\`) ani żadne
-  sekrety **nie trafiają do repo** (`.gitignore`) i nie są pokazywane w UI ani logach.
-- Login/hasło/token Telegrama bierze się ze zmiennych env lub pliku `STEAM_SECRETS_FILE`;
-  hasło w GUI żyje tylko w pamięci na czas logowania — nie jest zapisywane na dysk.
-- Bot **nie** ma `identity_secret` / sekretów 2FA — każdą ofertę potwierdzasz ręcznie w apce.
+- Refresh token i wszelkie sekrety **nie trafiają do repozytorium** (`.gitignore`) ani do
+  interfejsu czy logów.
+- Hasło w GUI żyje tylko w pamięci na czas logowania — nie jest zapisywane na dysk;
+  trwale trzymany jest wyłącznie refresh token (na Windowsie w `%APPDATA%`).
+- Bot **nie ma** `identity_secret` / sekretów 2FA, więc nie potwierdza ofert automatycznie —
+  każdą zatwierdzasz ręcznie w apce Steam Mobile.
+
+## Uwagi techniczne
+
+Dla osób zaglądających w kod / rozwijających projekt:
+
+- Endpoint ekwipunku wymaga nagłówka **`Referer`** i `count` **≤ 2000** (5000 → HTTP 400).
+- `priceoverview` jest ostro rate-limitowane (~20 żądań/min) — dlatego stały odstęp między
+  żądaniami (`--delay` / suwak *Odstęp*) i cache po nazwie.
+- Logowanie: `GetPasswordRSAPublicKey` to **GET**, reszta `Begin*/Poll*` to POST;
+  `platform_type = WebBrowser (2)`, `os_type = -500`; sesja web idzie przez `finalizelogin`.
+- Kod QR rysuje własny `tiny_qr.py` (zero zależności), zweryfikowany bit-w-bit z referencyjnym
+  enkoderem.
 
 ## Licencja
 
-MIT — patrz [LICENSE](LICENSE).
+[MIT](LICENSE).

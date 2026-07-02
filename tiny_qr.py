@@ -2,7 +2,7 @@
 """Minimalny generator kodów QR (byte mode, EC poziom M, wersje 1-10) — zero zależności.
 
 Wystarcza do challenge_url logowania Steam (~40-60 znaków). Używa go GUI
-(steam_seller_gui.py) do narysowania kodu QR, który skanujesz w apce Steam.
+(dupedealer_gui.py) do narysowania kodu QR, który skanujesz w apce Steam.
 Zwraca macierz 0/1 (listy wierszy); rysowanie to sprawa wołającego.
 
 matrix = tiny_qr.encode("https://s.team/q/...")

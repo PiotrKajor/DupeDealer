@@ -1,5 +1,5 @@
 @echo off
-REM Build SteamDupeSeller.exe (PyInstaller onefile, bez konsoli).
+REM Build DupeDealer.exe (PyInstaller onefile, bez konsoli).
 REM Wymagania: Python 3.10+ w PATH (launcher `py`). Uruchom z katalogu repo.
 
 setlocal
@@ -18,15 +18,15 @@ echo [3/3] PyInstaller...
 REM --collect-submodules steam.protobufs: pakiet `steam` laduje protobufy
 REM dynamicznie — bez tego w .exe zabraknie steammessages_auth_pb2.
 pyinstaller --noconfirm --clean --onefile --windowed ^
-    --name SteamDupeSeller ^
+    --name DupeDealer ^
     --icon app.ico ^
     --add-data "app.ico;." ^
     --collect-submodules steam.protobufs ^
     --hidden-import steam.protobufs.steammessages_auth_pb2 ^
-    steam_seller_gui.py || goto :error
+    dupedealer_gui.py || goto :error
 
 echo.
-echo Gotowe: dist\SteamDupeSeller.exe
+echo Gotowe: dist\DupeDealer.exe
 exit /b 0
 
 :error

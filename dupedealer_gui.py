@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Aplikacja okienkowa (PySide6) dla bota duplikatów Steam — nakładka na
-steam_dupe_seller.py + steam_auth.py. NIE duplikuje logiki: woła funkcje
+dupedealer.py + steam_auth.py. NIE duplikuje logiki: woła funkcje
 make_session / fetch_inventory / marketable_items / pick_duplicates /
 fetch_price / sell_item oraz logowanie ze steam_auth.
 
@@ -9,7 +9,7 @@ Sekrety (hasło, token, ciasteczka) nie trafiają do UI ani do logu.
 Ofert bot NIE potwierdza — po wystawieniu potwierdzasz ręcznie w apce
 Steam Mobile (Potwierdzenia -> Zatwierdź wszystko).
 
-Uruchomienie: python steam_seller_gui.py
+Uruchomienie: python dupedealer_gui.py
 Build .exe:   build.bat (PyInstaller, patrz README)
 """
 import os
@@ -19,7 +19,7 @@ import time
 
 import requests
 import steam_auth
-import steam_dupe_seller as core
+import dupedealer as core
 import tiny_qr
 from gui_theme import build_qss, ACCENT, GREEN, RED, TEXT_DIM, YELLOW
 
@@ -32,12 +32,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-# Na Windowsie token trzymamy w %APPDATA%\SteamDupeSeller (brak linuksowego
+# Na Windowsie token trzymamy w %APPDATA%\DupeDealer (brak linuksowego
 # $HOME/ścieżek /etc); na Linuksie zostaje domyślna ścieżka steam_auth.
 if os.name == 'nt':
     steam_auth.set_token_path(os.path.join(
         os.environ.get('APPDATA') or os.path.expanduser('~'),
-        'SteamDupeSeller', 'refresh_token'))
+        'DupeDealer', 'refresh_token'))
 
 APPS = [("Karty Steam (753/6)", '753', '6', 'Trading Card'),
         ("TF2 (440/2)", '440', '2', ''),
@@ -310,7 +310,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Steam Dupe Seller")
+        self.setWindowTitle("DupeDealer")
         self.resize(1100, 760)
         ico = resource_path("app.ico")
         if os.path.exists(ico):
@@ -327,7 +327,7 @@ class MainWindow(QMainWindow):
         self._qr_dialog = None
 
         self._build_ui()
-        self._log("Steam Dupe Seller — bot NIE potwierdza ofert; po wystawieniu "
+        self._log("DupeDealer — bot NIE potwierdza ofert; po wystawieniu "
                   "zatwierdzasz je ręcznie w apce Steam Mobile.")
         self._start_auth_check()
 
@@ -343,7 +343,7 @@ class MainWindow(QMainWindow):
         header = QFrame(); header.setObjectName("Header")
         h = QHBoxLayout(header); h.setContentsMargins(16, 12, 16, 12)
         tbox = QVBoxLayout(); tbox.setSpacing(0)
-        t1 = QLabel("Steam Dupe Seller"); t1.setObjectName("AppTitle")
+        t1 = QLabel("DupeDealer"); t1.setObjectName("AppTitle")
         t2 = QLabel("duplikaty kart → rynek Steam (zawsze zostaje 1 sztuka)")
         t2.setObjectName("AppSubtitle")
         tbox.addWidget(t1); tbox.addWidget(t2)
@@ -819,7 +819,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(build_qss())
-    app.setApplicationName("Steam Dupe Seller")
+    app.setApplicationName("DupeDealer")
     ico = resource_path("app.ico")
     if os.path.exists(ico):
         app.setWindowIcon(QIcon(ico))

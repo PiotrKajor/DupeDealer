@@ -3,7 +3,7 @@
 
 Trzyma refresh token w ~/.steam_refresh_token (przestawialne przez env
 STEAM_TOKEN_FILE albo set_token_path() — GUI na Windowsie używa
-%APPDATA%\\SteamDupeSeller\\refresh_token) i po cichu generuje z niego
+%APPDATA%\\DupeDealer\\refresh_token) i po cichu generuje z niego
 ciasteczko `steamLoginSecure` (bez interakcji). Gdy tokenu brak lub wygasł:
 startuje QR-login, wysyła link Steam na Telegram (otwierasz na telefonie z apką
 Steam -> Zatwierdź), odpytuje aż zatwierdzisz, zapisuje nowy token.
@@ -21,12 +21,12 @@ from steam.protobufs import steammessages_auth_pb2 as A
 
 API = "https://api.steampowered.com/IAuthenticationService/{}/v1/"
 # Ścieżka refresh tokenu: env STEAM_TOKEN_FILE > domyślna linuksowa. GUI na Windowsie
-# przestawia ją przez set_token_path() na %APPDATA%\SteamDupeSeller\refresh_token.
+# przestawia ją przez set_token_path() na %APPDATA%\DupeDealer\refresh_token.
 TOKEN_FILE = os.environ.get("STEAM_TOKEN_FILE") or os.path.expanduser("~/.steam_refresh_token")
 # Opcjonalny plik z sekretami (STEAM_LOGIN/STEAM_PASSWORD/TG_*) w formacie KEY=VALUE.
 # Ścieżkę nadpisujesz env STEAM_SECRETS_FILE; najprościej podać dane wprost przez env.
-SECRETS = os.environ.get("STEAM_SECRETS_FILE") or "/etc/steam-dupe-seller/secrets"
-DEVICE_NAME = "steam-dupe-seller"
+SECRETS = os.environ.get("STEAM_SECRETS_FILE") or "/etc/DupeDealer/secrets"
+DEVICE_NAME = "DupeDealer"
 PLATFORM_WEB = A.k_EAuthTokenPlatformType_WebBrowser  # 2
 OS_WEB = -500  # EOSType Web
 POLL_TIMEOUT = 180  # s na zatwierdzenie w apce

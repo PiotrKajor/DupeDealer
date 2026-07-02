@@ -1,4 +1,4 @@
-"""Ciemny motyw (QSS) dla steam_seller_gui.py — bez zewnętrznych pakietów motywów.
+"""Ciemny motyw (QSS) dla dupedealer_gui.py — bez zewnętrznych pakietów motywów.
 
 Paleta: granatowa czerń + steamowy błękit jako akcent. Wszystko zaokrąglone,
 hover/pressed na przyciskach, tabela z naprzemiennymi wierszami i płaskim
@@ -51,7 +51,7 @@ def build_qss(asset_dir=None):
     """Zwraca gotowy arkusz QSS. Ikonki lądują w `asset_dir` (domyślnie podkatalog
     w temp systemu)."""
     if asset_dir is None:
-        asset_dir = os.path.join(tempfile.gettempdir(), "steam_dupe_seller_assets")
+        asset_dir = os.path.join(tempfile.gettempdir(), "dupedealer_assets")
     a = _write_assets(asset_dir)
     return f"""
 * {{

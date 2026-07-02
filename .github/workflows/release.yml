@@ -1,4 +1,4 @@
-# Buduje SteamDupeSeller.exe na Windowsie i dołącza go do GitHub Release.
+# Buduje DupeDealer.exe na Windowsie i dołącza go do GitHub Release.
 # Odpala się na tag `v*` (tworzy Release) albo ręcznie (workflow_dispatch):
 # z podanym inputem `tag` tworzy tag+Release, bez niego — tylko artefakt
 # do pobrania z zakładki Actions.
@@ -36,30 +36,30 @@ jobs:
           pip install -r requirements.txt
 
       - name: Selftest CLI (dowód, że logika bez zmian)
-        run: python steam_dupe_seller.py --selftest
+        run: python dupedealer.py --selftest
 
       - name: Smoke import GUI
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -c "import steam_seller_gui, tiny_qr, gui_theme; print('import OK')"
+        run: python -c "import dupedealer_gui, tiny_qr, gui_theme; print('import OK')"
 
       - name: PyInstaller
         # --collect-submodules steam.protobufs: pakiet `steam` laduje protobufy
         # dynamicznie — bez tego w .exe zabraknie steammessages_auth_pb2
         run: >-
           pyinstaller --noconfirm --clean --onefile --windowed
-          --name SteamDupeSeller
+          --name DupeDealer
           --icon app.ico
           --add-data "app.ico;."
           --collect-submodules steam.protobufs
           --hidden-import steam.protobufs.steammessages_auth_pb2
-          steam_seller_gui.py
+          dupedealer_gui.py
 
       - name: Artefakt buildu
         uses: actions/upload-artifact@v4
         with:
-          name: SteamDupeSeller-exe
-          path: dist/SteamDupeSeller.exe
+          name: DupeDealer-exe
+          path: dist/DupeDealer.exe
 
       - name: Release (tag push, dispatch z inputem `tag` albo marker w commicie)
         if: >-
@@ -82,14 +82,14 @@ jobs:
           fi
           if [ -z "$TAG" ]; then echo "brak wersji release"; exit 1; fi
           cat > notes.md <<'EOF'
-          `SteamDupeSeller.exe` — aplikacja okienkowa do wystawiania duplikatów
+          `DupeDealer.exe` — aplikacja okienkowa do wystawiania duplikatów
           kart/przedmiotów Steam na rynku (zawsze zostaje 1 sztuka każdego rodzaju).
 
           - pojedynczy plik, bez konsoli (PyInstaller onefile, Windows 64-bit),
             zbudowany automatycznie przez GitHub Actions
           - plik nie jest podpisany — SmartScreen może ostrzec
             („Więcej informacji" → „Uruchom mimo to")
-          - token logowania trafia do `%APPDATA%\SteamDupeSeller\refresh_token`;
+          - token logowania trafia do `%APPDATA%\DupeDealer\refresh_token`;
             hasło nie jest nigdzie zapisywane
           - po wystawieniu ofert: apka Steam Mobile → Potwierdzenia → Zatwierdź wszystko
             (bot nie potwierdza automatycznie)
@@ -98,6 +98,6 @@ jobs:
           for old in v1.0.0 v1.0.1 "$TAG"; do
             gh release delete "$old" --cleanup-tag --yes 2>/dev/null || true
           done
-          gh release create "$TAG" "${TARGET[@]}" dist/SteamDupeSeller.exe \
-            --title "SteamDupeSeller $TAG" \
+          gh release create "$TAG" "${TARGET[@]}" dist/DupeDealer.exe \
+            --title "DupeDealer $TAG" \
             --notes-file notes.md

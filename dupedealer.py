@@ -9,7 +9,7 @@ DOMYŚLNIE DRY-RUN. Realnie wystawia dopiero z flagą --sell.
 --noninteractive: tryb cron (nie czeka na logowanie, tylko alertuje na TG).
 Zależność: requests, steam_auth (protobuf==3.20.3, steam).
 
-Kluczowe kroki są funkcjami (używa ich też GUI — steam_seller_gui.py):
+Kluczowe kroki są funkcjami (używa ich też GUI — dupedealer_gui.py):
 make_session / fetch_inventory / marketable_items / pick_duplicates /
 fetch_price / sell_item.
 """

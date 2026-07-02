@@ -4,7 +4,7 @@
 
 **Wystawia duplikaty kart i przedmiotów Steam na rynku — zawsze zostawiając po jednej sztuce każdego rodzaju.**
 
-Aplikacja okienkowa na Windows (ciemne GUI) i skrypt CLI. Bez przeglądarki, na czystym `requests`.
+Aplikacja okienkowa na Windows i skrypt CLI. Bez przeglądarki, na czystym `requests`.
 
 [![Pobierz .exe](https://img.shields.io/badge/Pobierz-DupeDealer.exe-4fb4ff?style=for-the-badge)](../../releases/latest)
 &nbsp;

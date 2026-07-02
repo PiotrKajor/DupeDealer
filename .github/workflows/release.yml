@@ -94,6 +94,10 @@ jobs:
           - po wystawieniu ofert: apka Steam Mobile → Potwierdzenia → Zatwierdź wszystko
             (bot nie potwierdza automatycznie)
           EOF
+          # sprzątanie release'ów z fazy bootstrapu i ewentualnego poprzedniego biegu
+          for old in v1.0.0 v1.0.1 "$TAG"; do
+            gh release delete "$old" --cleanup-tag --yes 2>/dev/null || true
+          done
           gh release create "$TAG" "${TARGET[@]}" dist/SteamDupeSeller.exe \
             --title "SteamDupeSeller $TAG" \
             --notes-file notes.md

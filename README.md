@@ -5,7 +5,13 @@ Grupuje ekwipunek po `market_hash_name` i wystawia nadmiar — **zawsze zostawia
 każdego rodzaju**. Czyste `requests`, bez przeglądarki. Potwierdzenie ofert robisz **ręcznie
 w apce Steam Mobile** (Potwierdzenia → Zatwierdź wszystko).
 
-Konto: **KrecikT0K0x** (steamid `76561199087363689`).
+Dwa sposoby użycia: **skrypt CLI** (Linux/cron) oraz **aplikacja okienkowa Windows**
+z ciemnym GUI — gotowy `.exe` do pobrania w [Releases](../../releases/latest).
+
+> ⚠️ **Uwaga.** Automatyzacja rynku Steam może naruszać
+> [Steam Subscriber Agreement](https://store.steampowered.com/subscriber_agreement/).
+> Używasz na **własną odpowiedzialność i ryzyko** (możliwy ban konta / rynku). Projekt
+> edukacyjny, bez gwarancji. Nie podawaj danych logowania na maszynach, którym nie ufasz.
 
 ---
 
@@ -51,13 +57,15 @@ steam-seller-venv/bin/python steam_auth.py --qr      # fallback: link do ZESKANO
 steam-seller-venv/bin/python steam_auth.py --cookie  # debug: wypisz aktualne ciasteczka
 ```
 
-- **`--login`** (domyślny sposób): login+hasło z `/etc/skynet/secrets` (`STEAM_LOGIN`,
-  `STEAM_PASSWORD`) → RSA-encrypt hasła → `BeginAuthSessionViaCredentials` → Steam wysyła
-  **push do apki**, klikasz Zatwierdź → `PollAuthSessionStatus` łapie refresh token.
-- **`--qr`**: link `s.team/q/...` wysyłany też na Telegram. **Zeskanuj** go aparatem w apce
-  Steam — kliknięcie linku ląduje na stronie pobierania, nie loguje.
-- Konto ma tylko **mobilny authenticator** (push), nie kod — brak `identity_secret`,
-  więc oferty potwierdzasz ręcznie.
+- **`--login`** (domyślny sposób): login+hasło ze zmiennych env `STEAM_LOGIN`/`STEAM_PASSWORD`
+  (albo z pliku wskazanego przez `STEAM_SECRETS_FILE`, format `KEY=VALUE`) → RSA-encrypt hasła →
+  `BeginAuthSessionViaCredentials` → Steam wysyła **push do apki**, klikasz Zatwierdź →
+  `PollAuthSessionStatus` łapie refresh token. W GUI login/hasło wpisujesz w okienku (nic
+  nie jest zapisywane na dysk).
+- **`--qr`**: link `s.team/q/...` (opcjonalnie wysyłany też na Telegram). **Zeskanuj** go
+  aparatem w apce Steam — kliknięcie linku ląduje na stronie pobierania, nie loguje.
+- Konto z samym **mobilnym authenticatorem** (push, bez kodu) nie ma `identity_secret`,
+  więc oferty potwierdzasz ręcznie — bot ich nie zatwierdza.
 
 ### Pułapki logowania
 
@@ -141,7 +149,7 @@ pyinstaller --onefile --windowed --icon app.ico --name SteamDupeSeller ^
 ### Jak to działa na Windowsie
 
 - **Refresh token** ląduje w `%APPDATA%\SteamDupeSeller\refresh_token`
-  (nie ma tu `/etc/skynet/secrets` ani linuksowego `$HOME`).
+  (nie ma tu linuksowego `$HOME` ani ścieżek `/etc`).
 - **Logowanie push**: GUI pyta o login+hasło i przekazuje je prosto do
   `credentials_login()` (RSA → push do apki Steam Mobile). Hasło **nie jest zapisywane** —
   trzymany jest wyłącznie refresh token.
@@ -158,12 +166,13 @@ pyinstaller --onefile --windowed --icon app.ico --name SteamDupeSeller ^
 ## Automatyzacja (cron)
 
 ```cron
-# user skynet — tygodniowo w niedzielę 12:00, tryb bez blokowania
-0 12 * * 0 cd /home/skynet && steam-seller-venv/bin/python steam_dupe_seller.py --sell --noninteractive
+# tygodniowo w niedzielę 12:00, tryb bez blokowania (podmień ścieżkę na swoją)
+0 12 * * 0 cd ~/steam-dupe-seller && steam-seller-venv/bin/python steam_dupe_seller.py --sell --noninteractive
 ```
 
 `--noninteractive` w cronie: gdy refresh token wygasł, zamiast czekać na push wysyła alert
-na Telegram i kończy. Wystawione oferty i tak czekają na **ręczne** zatwierdzenie w apce.
+na Telegram (jeśli skonfigurowany) i kończy. Wystawione oferty i tak czekają na **ręczne**
+zatwierdzenie w apce.
 
 ## Pułapki (`steam_dupe_seller.py`)
 
@@ -173,16 +182,22 @@ na Telegram i kończy. Wystawione oferty i tak czekają na **ręczne** zatwierdz
 - Przedmioty bez duplikatów (naklejki, ramki, awatary z eventów) są pomijane z definicji —
   zostaje po 1 sztuce każdego rodzaju.
 
-## Historia użycia
+## Skala (przykład)
 
-- **2026-06-29** (pierwsze uruchomienie): 272 karty → 103 duplikaty wystawione za ~24,81 zł.
-  Z emotkami i tłami (`--types 'Trading Card,Emoticon,Profile Background'`): 170 ofert, ~37 zł.
-- **2026-07-02**: przejście na logowanie przez `steam_auth.py` (refresh token) — koniec
-  ręcznego wklejania ciasteczek.
+Rząd wielkości z jednego przebiegu na koncie z dużą kolekcją: ~270 kart → ~100 duplikatów
+kart wystawionych za kilkadziesiąt złotych; z emotkami i tłami
+(`--types 'Trading Card,Emoticon,Profile Background'`) odpowiednio więcej ofert. Ceny kart
+są niskie (grosze–złotówki), więc to raczej „porządki w ekwipunku" niż zarobek.
 
 ## Bezpieczeństwo
 
-- `~/.steam_refresh_token` (chmod 600) i sekrety w `/etc/skynet/secrets` **nie trafiają do repo**
-  (`.gitignore`). Login/hasło/token Telegrama bierze się ze zmiennych env lub `/etc/skynet/secrets`.
+- Refresh token (`~/.steam_refresh_token`, chmod 600, na Windowsie `%APPDATA%\SteamDupeSeller\`)
+  ani żadne sekrety **nie trafiają do repo** (`.gitignore`) — i nie są pokazywane w UI ani logach.
+- Login/hasło/token Telegrama bierze się ze zmiennych env lub z pliku `STEAM_SECRETS_FILE`.
+  Hasło w GUI istnieje tylko w pamięci na czas logowania — nie jest zapisywane na dysk.
 - Bot **nie** ma `identity_secret` / sekretów 2FA — nie potwierdza ofert automatycznie.
   Każda oferta wymaga ręcznego kliknięcia w apce Steam Mobile.
+
+## Licencja
+
+MIT — patrz [LICENSE](LICENSE).

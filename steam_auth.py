@@ -23,7 +23,10 @@ API = "https://api.steampowered.com/IAuthenticationService/{}/v1/"
 # Ścieżka refresh tokenu: env STEAM_TOKEN_FILE > domyślna linuksowa. GUI na Windowsie
 # przestawia ją przez set_token_path() na %APPDATA%\SteamDupeSeller\refresh_token.
 TOKEN_FILE = os.environ.get("STEAM_TOKEN_FILE") or os.path.expanduser("~/.steam_refresh_token")
-SECRETS = "/etc/skynet/secrets"
+# Opcjonalny plik z sekretami (STEAM_LOGIN/STEAM_PASSWORD/TG_*) w formacie KEY=VALUE.
+# Ścieżkę nadpisujesz env STEAM_SECRETS_FILE; najprościej podać dane wprost przez env.
+SECRETS = os.environ.get("STEAM_SECRETS_FILE") or "/etc/steam-dupe-seller/secrets"
+DEVICE_NAME = "steam-dupe-seller"
 PLATFORM_WEB = A.k_EAuthTokenPlatformType_WebBrowser  # 2
 OS_WEB = -500  # EOSType Web
 POLL_TIMEOUT = 180  # s na zatwierdzenie w apce
@@ -102,9 +105,9 @@ def _load_token():
 
 def begin_qr():
     req = A.CAuthentication_BeginAuthSessionViaQR_Request()
-    req.device_friendly_name = "skynet-dupe-seller"
+    req.device_friendly_name = DEVICE_NAME
     req.platform_type = PLATFORM_WEB
-    req.device_details.device_friendly_name = "skynet-dupe-seller"
+    req.device_details.device_friendly_name = DEVICE_NAME
     req.device_details.platform_type = PLATFORM_WEB
     req.device_details.os_type = OS_WEB
     resp = A.CAuthentication_BeginAuthSessionViaQR_Response()
@@ -164,15 +167,15 @@ def credentials_login(account=None, password=None, should_cancel=None):
     """Logowanie login+hasło z potwierdzeniem w apce Steam (bez linku, bez kodu).
 
     `account`/`password` podane wprost (GUI) mają pierwszeństwo; bez nich bierze
-    STEAM_LOGIN/STEAM_PASSWORD z env lub /etc/skynet/secrets (CLI jak dotąd).
-    Konto ma mobilny authenticator -> Steam wysyła push do apki, user klika Zatwierdź.
+    STEAM_LOGIN/STEAM_PASSWORD z env lub z pliku SECRETS (patrz na górze modułu).
+    Konto z mobilnym authenticatorem -> Steam wysyła push do apki, user klika Zatwierdź.
     """
     s = _secrets()
     account = account or os.environ.get("STEAM_LOGIN") or s.get("STEAM_LOGIN")
     password = password or os.environ.get("STEAM_PASSWORD") or s.get("STEAM_PASSWORD")
     if not account or not password:
         raise RuntimeError("brak loginu/hasła — podaj je wprost albo ustaw "
-                           "STEAM_LOGIN/STEAM_PASSWORD (env lub /etc/skynet/secrets)")
+                           "STEAM_LOGIN/STEAM_PASSWORD (env lub plik STEAM_SECRETS_FILE)")
 
     enc_pw, ts = _encrypt_password(account, password)
     req = A.CAuthentication_BeginAuthSessionViaCredentials_Request()
@@ -182,9 +185,9 @@ def credentials_login(account=None, password=None, should_cancel=None):
     req.remember_login = True
     req.persistence = 1  # k_ESessionPersistence_Persistent
     req.website_id = "Community"
-    req.device_friendly_name = "skynet-dupe-seller"
+    req.device_friendly_name = DEVICE_NAME
     req.platform_type = PLATFORM_WEB
-    req.device_details.device_friendly_name = "skynet-dupe-seller"
+    req.device_details.device_friendly_name = DEVICE_NAME
     req.device_details.platform_type = PLATFORM_WEB
     req.device_details.os_type = OS_WEB
     resp = A.CAuthentication_BeginAuthSessionViaCredentials_Response()

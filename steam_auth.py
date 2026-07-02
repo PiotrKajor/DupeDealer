@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Sesja web Steam bez ręcznego wklejania ciasteczek.
 
-Trzyma refresh token w ~/.steam_refresh_token i po cichu generuje z niego
+Trzyma refresh token w ~/.steam_refresh_token (przestawialne przez env
+STEAM_TOKEN_FILE albo set_token_path() — GUI na Windowsie używa
+%APPDATA%\\SteamDupeSeller\\refresh_token) i po cichu generuje z niego
 ciasteczko `steamLoginSecure` (bez interakcji). Gdy tokenu brak lub wygasł:
 startuje QR-login, wysyła link Steam na Telegram (otwierasz na telefonie z apką
 Steam -> Zatwierdź), odpytuje aż zatwierdzisz, zapisuje nowy token.
@@ -18,11 +20,19 @@ import rsa
 from steam.protobufs import steammessages_auth_pb2 as A
 
 API = "https://api.steampowered.com/IAuthenticationService/{}/v1/"
-TOKEN_FILE = os.path.expanduser("~/.steam_refresh_token")
+# Ścieżka refresh tokenu: env STEAM_TOKEN_FILE > domyślna linuksowa. GUI na Windowsie
+# przestawia ją przez set_token_path() na %APPDATA%\SteamDupeSeller\refresh_token.
+TOKEN_FILE = os.environ.get("STEAM_TOKEN_FILE") or os.path.expanduser("~/.steam_refresh_token")
 SECRETS = "/etc/skynet/secrets"
 PLATFORM_WEB = A.k_EAuthTokenPlatformType_WebBrowser  # 2
 OS_WEB = -500  # EOSType Web
 POLL_TIMEOUT = 180  # s na zatwierdzenie w apce
+
+
+def set_token_path(path):
+    """Przestawia ścieżkę pliku refresh tokenu (dla GUI/Windows)."""
+    global TOKEN_FILE
+    TOKEN_FILE = path
 
 
 def _secrets():
@@ -75,6 +85,9 @@ def _steamid_from_jwt(tok):
 
 
 def _save_token(rt):
+    d = os.path.dirname(TOKEN_FILE)
+    if d:
+        os.makedirs(d, exist_ok=True)
     with open(TOKEN_FILE, "w") as f:
         f.write(rt.strip() + "\n")
     os.chmod(TOKEN_FILE, 0o600)
@@ -101,12 +114,18 @@ def begin_qr():
     return resp
 
 
-def poll_until_approved(resp, timeout=POLL_TIMEOUT):
+def poll_until_approved(resp, timeout=POLL_TIMEOUT, should_cancel=None):
+    """Odpytuje status sesji aż user zatwierdzi w apce. `should_cancel()` (opcjonalny,
+    dla GUI) pozwala przerwać czekanie — sprawdzany co pół sekundy."""
     client_id, request_id = resp.client_id, resp.request_id
     interval = max(2, int(resp.interval or 5))
     deadline = time.time() + timeout
     while time.time() < deadline:
-        time.sleep(interval)
+        wake = time.time() + interval
+        while time.time() < wake:
+            if should_cancel and should_cancel():
+                raise RuntimeError("logowanie anulowane")
+            time.sleep(0.5)
         pr = A.CAuthentication_PollAuthSessionStatus_Request()
         pr.client_id = client_id
         pr.request_id = request_id
@@ -141,17 +160,19 @@ def _encrypt_password(account_name, password):
     return enc, resp.timestamp
 
 
-def credentials_login():
+def credentials_login(account=None, password=None, should_cancel=None):
     """Logowanie login+hasło z potwierdzeniem w apce Steam (bez linku, bez kodu).
 
-    Dane z /etc/skynet/secrets: STEAM_LOGIN, STEAM_PASSWORD. Konto ma mobilny
-    authenticator -> Steam wysyła push do apki, user klika Zatwierdź.
+    `account`/`password` podane wprost (GUI) mają pierwszeństwo; bez nich bierze
+    STEAM_LOGIN/STEAM_PASSWORD z env lub /etc/skynet/secrets (CLI jak dotąd).
+    Konto ma mobilny authenticator -> Steam wysyła push do apki, user klika Zatwierdź.
     """
     s = _secrets()
-    account = os.environ.get("STEAM_LOGIN") or s.get("STEAM_LOGIN")
-    password = os.environ.get("STEAM_PASSWORD") or s.get("STEAM_PASSWORD")
+    account = account or os.environ.get("STEAM_LOGIN") or s.get("STEAM_LOGIN")
+    password = password or os.environ.get("STEAM_PASSWORD") or s.get("STEAM_PASSWORD")
     if not account or not password:
-        raise RuntimeError("brak STEAM_LOGIN/STEAM_PASSWORD w /etc/skynet/secrets")
+        raise RuntimeError("brak loginu/hasła — podaj je wprost albo ustaw "
+                           "STEAM_LOGIN/STEAM_PASSWORD (env lub /etc/skynet/secrets)")
 
     enc_pw, ts = _encrypt_password(account, password)
     req = A.CAuthentication_BeginAuthSessionViaCredentials_Request()
@@ -181,7 +202,7 @@ def credentials_login():
     else:
         raise RuntimeError(f"nieobsługiwany typ potwierdzenia: {types}")
 
-    rt = poll_until_approved(resp)
+    rt = poll_until_approved(resp, should_cancel=should_cancel)
     _save_token(rt)
     _tg("✅ Bot kart Steam: zalogowano, token zapisany (ważny wiele miesięcy).")
     print("Zalogowano, token zapisany do", TOKEN_FILE)

@@ -21,7 +21,7 @@ import requests
 import steam_auth
 import steam_dupe_seller as core
 import tiny_qr
-from gui_theme import QSS, ACCENT, GREEN, RED, TEXT_DIM, YELLOW
+from gui_theme import build_qss, ACCENT, GREEN, RED, TEXT_DIM, YELLOW
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPixmap
@@ -32,8 +32,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
-# Na Windowsie token trzymamy w %APPDATA%\SteamDupeSeller (brak /etc/skynet
-# i linuksowego $HOME); na Linuksie zostaje domyślna ścieżka steam_auth.
+# Na Windowsie token trzymamy w %APPDATA%\SteamDupeSeller (brak linuksowego
+# $HOME/ścieżek /etc); na Linuksie zostaje domyślna ścieżka steam_auth.
 if os.name == 'nt':
     steam_auth.set_token_path(os.path.join(
         os.environ.get('APPDATA') or os.path.expanduser('~'),
@@ -559,6 +559,7 @@ class MainWindow(QMainWindow):
         self.btn_load.setEnabled(False)
         self.btn_dry.setEnabled(False)
         self.btn_sell.setEnabled(False)
+        self.progress.setRange(0, 1); self.progress.setValue(0)   # zeruj po poprzednim biegu
         self.progress_label.setText("Pobieram ekwipunek…")
         w = InventoryWorker(self.session, self.steamid, appid, ctx,
                             self.types_edit.text())
@@ -817,7 +818,7 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    app.setStyleSheet(QSS)
+    app.setStyleSheet(build_qss())
     app.setApplicationName("Steam Dupe Seller")
     ico = resource_path("app.ico")
     if os.path.exists(ico):

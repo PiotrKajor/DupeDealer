@@ -1,12 +1,18 @@
 # Buduje SteamDupeSeller.exe na Windowsie i dołącza go do GitHub Release.
-# Odpala się na tag `v*` (tworzy Release) albo ręcznie (workflow_dispatch —
-# wtedy tylko artefakt do pobrania z zakładki Actions).
+# Odpala się na tag `v*` (tworzy Release) albo ręcznie (workflow_dispatch):
+# z podanym inputem `tag` tworzy tag+Release, bez niego — tylko artefakt
+# do pobrania z zakładki Actions.
 name: Release .exe
 
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Wersja release (np. v1.0.0); puste = tylko artefakt'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -52,12 +58,19 @@ jobs:
           name: SteamDupeSeller-exe
           path: dist/SteamDupeSeller.exe
 
-      - name: Release (tylko przy tagu)
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Release (tag push albo dispatch z inputem `tag`)
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
+          # dispatch: tag jeszcze nie istnieje — gh utworzy go na buildowanym commicie
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"; TARGET=(--target "$GITHUB_SHA")
+          else
+            TAG="$GITHUB_REF_NAME"; TARGET=()
+          fi
           cat > notes.md <<'EOF'
           `SteamDupeSeller.exe` — aplikacja okienkowa do wystawiania duplikatów
           kart/przedmiotów Steam na rynku (zawsze zostaje 1 sztuka każdego rodzaju).
@@ -71,6 +84,6 @@ jobs:
           - po wystawieniu ofert: apka Steam Mobile → Potwierdzenia → Zatwierdź wszystko
             (bot nie potwierdza automatycznie)
           EOF
-          gh release create "${GITHUB_REF_NAME}" dist/SteamDupeSeller.exe \
-            --title "SteamDupeSeller ${GITHUB_REF_NAME}" \
+          gh release create "$TAG" "${TARGET[@]}" dist/SteamDupeSeller.exe \
+            --title "SteamDupeSeller $TAG" \
             --notes-file notes.md

@@ -1,0 +1,76 @@
+# Buduje SteamDupeSeller.exe na Windowsie i dołącza go do GitHub Release.
+# Odpala się na tag `v*` (tworzy Release) albo ręcznie (workflow_dispatch —
+# wtedy tylko artefakt do pobrania z zakładki Actions).
+name: Release .exe
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Zależności
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Selftest CLI (dowód, że logika bez zmian)
+        run: python steam_dupe_seller.py --selftest
+
+      - name: Smoke import GUI
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -c "import steam_seller_gui, tiny_qr, gui_theme; print('import OK')"
+
+      - name: PyInstaller
+        # --collect-submodules steam.protobufs: pakiet `steam` laduje protobufy
+        # dynamicznie — bez tego w .exe zabraknie steammessages_auth_pb2
+        run: >-
+          pyinstaller --noconfirm --clean --onefile --windowed
+          --name SteamDupeSeller
+          --icon app.ico
+          --add-data "app.ico;."
+          --collect-submodules steam.protobufs
+          --hidden-import steam.protobufs.steammessages_auth_pb2
+          steam_seller_gui.py
+
+      - name: Artefakt buildu
+        uses: actions/upload-artifact@v4
+        with:
+          name: SteamDupeSeller-exe
+          path: dist/SteamDupeSeller.exe
+
+      - name: Release (tylko przy tagu)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          `SteamDupeSeller.exe` — aplikacja okienkowa do wystawiania duplikatów
+          kart/przedmiotów Steam na rynku (zawsze zostaje 1 sztuka każdego rodzaju).
+
+          - pojedynczy plik, bez konsoli (PyInstaller onefile, Windows 64-bit),
+            zbudowany automatycznie przez GitHub Actions
+          - plik nie jest podpisany — SmartScreen może ostrzec
+            („Więcej informacji" → „Uruchom mimo to")
+          - token logowania trafia do `%APPDATA%\SteamDupeSeller\refresh_token`;
+            hasło nie jest nigdzie zapisywane
+          - po wystawieniu ofert: apka Steam Mobile → Potwierdzenia → Zatwierdź wszystko
+            (bot nie potwierdza automatycznie)
+          EOF
+          gh release create "${GITHUB_REF_NAME}" dist/SteamDupeSeller.exe \
+            --title "SteamDupeSeller ${GITHUB_REF_NAME}" \
+            --notes-file notes.md

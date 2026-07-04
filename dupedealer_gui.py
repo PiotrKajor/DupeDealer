@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 
 import requests
 import steam_auth
@@ -24,9 +25,9 @@ import dupedealer as core
 import tiny_qr
 from gui_theme import build_qss, ACCENT, GREEN, RED, TEXT_DIM, YELLOW
 
-from PySide6.QtCore import Qt, QSize, QThread, Signal
-from PySide6.QtGui import (QColor, QIcon, QImage, QPainter, QPainterPath,
-                           QPixmap)
+from PySide6.QtCore import Qt, QSize, QThread, QUrl, Signal
+from PySide6.QtGui import (QColor, QDesktopServices, QIcon, QImage, QPainter,
+                           QPainterPath, QPixmap)
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -64,18 +65,21 @@ THUMB_SIZE = 32         # bok miniatury przedmiotu w tabeli (px)
 FULL_MAX = 220          # maks. szerokość pełnego obrazka w dymku po najechaniu (px)
 
 
-def circular_pixmap(data, size):
-    """Bajty obrazka -> okrągły QPixmap `size`×`size` (awatar). None gdy dane złe."""
+def square_pixmap(data, size, radius=6):
+    """Bajty obrazka -> kwadratowy QPixmap `size`×`size` z lekko zaokrąglonymi rogami
+    (awatar). Wyśrodkowane przycięcie do kwadratu. None gdy dane są złe."""
     src = QPixmap()
     if not data or not src.loadFromData(data):
         return None
     src = src.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    if src.width() != size or src.height() != size:      # przytnij nadmiar do kwadratu
+        src = src.copy((src.width() - size) // 2, (src.height() - size) // 2, size, size)
     out = QPixmap(size, size)
     out.fill(Qt.transparent)
     p = QPainter(out)
     p.setRenderHint(QPainter.Antialiasing, True)
     path = QPainterPath()
-    path.addEllipse(0, 0, size, size)
+    path.addRoundedRect(0, 0, size, size, radius, radius)
     p.setClipPath(path)
     p.drawPixmap(0, 0, src)
     p.end()
@@ -419,6 +423,7 @@ class MainWindow(QMainWindow):
         self.steamid = self.sessionid = None
         self.price_cache = {}        # market_hash_name -> buyer_cents (per appid+waluta)
         self._cache_key = None
+        self._loaded_appid = None    # appid ekwipunku w tabeli (do linku na rynek)
         self.rows = {}               # name -> {'total','assets','buyer','items':{...}}
         self._workers = []
         self._price_worker = None
@@ -456,7 +461,7 @@ class MainWindow(QMainWindow):
         self.avatar_label.setFixedSize(AVATAR_SIZE, AVATAR_SIZE)
         self.avatar_label.setVisible(False)
         h.addWidget(self.avatar_label)
-        h.addSpacing(8)
+        h.addSpacing(14)
         self.status_dot = QLabel("●"); self.status_dot.setObjectName("StatusDot")
         idbox = QVBoxLayout(); idbox.setSpacing(0)
         self.status_label = QLabel("Sprawdzam logowanie…")
@@ -529,7 +534,10 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSortingEnabled(True)
+        self.table.setMouseTracking(True)          # do kursora „rączki" nad miniaturą
         self.table.itemChanged.connect(self._item_changed)
+        self.table.cellClicked.connect(self._cell_clicked)
+        self.table.entered.connect(self._cell_entered)
         v.addWidget(self.table, 1)
 
         # pasek akcji pod tabelą
@@ -633,7 +641,7 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------- awatar / portfel ---
     def _avatar_ready(self, key, data):
-        pix = circular_pixmap(data, AVATAR_SIZE)
+        pix = square_pixmap(data, AVATAR_SIZE)
         if pix:
             self.avatar_label.setPixmap(pix)
             self.avatar_label.setVisible(True)
@@ -696,6 +704,7 @@ class MainWindow(QMainWindow):
         if key != self._cache_key:
             self.price_cache = {}
             self._cache_key = key
+        self._loaded_appid = appid       # link „otwórz na rynku" używa appid z tego wczytania
         self.btn_load.setEnabled(False)
         self.btn_dry.setEnabled(False)
         self.btn_sell.setEnabled(False)
@@ -799,9 +808,33 @@ class MainWindow(QMainWindow):
     def _apply_thumb(self, rec, thumb, tip):
         self._filling = True
         rec['icon_it'].setData(Qt.DecorationRole, thumb)
-        rec['icon_it'].setToolTip(tip)
+        # nad miniaturą: pełny obraz + podpowiedź, że klik otwiera przedmiot na rynku
+        rec['icon_it'].setToolTip(
+            tip + '<div align="center" style="color:#8b94a7">'
+            'kliknij, aby otworzyć na rynku</div>')
         rec['name_it'].setToolTip(tip)      # dymek również nad nazwą przedmiotu
         self._filling = False
+
+    def _cell_clicked(self, row, col):
+        """Klik w miniaturę -> otwiera stronę przedmiotu na Rynku Społeczności."""
+        if col != self.COL_ICON:
+            return
+        name_item = self.table.item(row, self.COL_NAME)
+        appid = self._loaded_appid
+        if not name_item or not appid:
+            return
+        name = name_item.text()
+        url = (f"https://steamcommunity.com/market/listings/"
+               f"{appid}/{urllib.parse.quote(name, safe='')}")
+        QDesktopServices.openUrl(QUrl(url))
+        self._log(f"↗ Otwieram na rynku: {name}", ACCENT)
+
+    def _cell_entered(self, index):
+        """Kursor „rączki" nad kolumną miniatury (sygnał wymaga mouse trackingu)."""
+        if index.column() == self.COL_ICON:
+            self.table.viewport().setCursor(Qt.PointingHandCursor)
+        else:
+            self.table.viewport().unsetCursor()
 
     # --------------------------------------------------------------- wycena ---
     def _start_pricing(self):

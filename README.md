@@ -1,5 +1,7 @@
 <div align="center">
 
+<sub><b>Polski</b> · <a href="README.en.md">English</a></sub>
+
 # 🏷️ DupeDealer
 
 **Wystawia duplikaty kart i przedmiotów Steam na rynku — zawsze zostawiając po jednej sztuce każdego rodzaju.**

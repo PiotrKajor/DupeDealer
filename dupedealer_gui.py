@@ -400,6 +400,16 @@ class QrDialog(QDialog):
 
 
 # ------------------------------------------------------------ główne okno ---
+class ClickableLabel(QLabel):
+    """QLabel z sygnałem `clicked` (QLabel domyślnie go nie ma) — dla awatara."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class NumericItem(QTableWidgetItem):
     """Item sortowany po wartości liczbowej (UserRole), nie po tekście."""
 
@@ -455,10 +465,13 @@ class MainWindow(QMainWindow):
         tbox.addWidget(t1); tbox.addWidget(t2)
         h.addLayout(tbox)
         h.addStretch(1)
-        # awatar konta (ukryty do zalogowania) + saldo portfela
-        self.avatar_label = QLabel()
+        # awatar konta (ukryty do zalogowania, klik = profil) + saldo portfela
+        self.avatar_label = ClickableLabel()
         self.avatar_label.setObjectName("Avatar")
         self.avatar_label.setFixedSize(AVATAR_SIZE, AVATAR_SIZE)
+        self.avatar_label.setCursor(Qt.PointingHandCursor)
+        self.avatar_label.setToolTip("Otwórz profil Steam")
+        self.avatar_label.clicked.connect(self._open_profile)
         self.avatar_label.setVisible(False)
         h.addWidget(self.avatar_label)
         h.addSpacing(14)
@@ -645,6 +658,13 @@ class MainWindow(QMainWindow):
         if pix:
             self.avatar_label.setPixmap(pix)
             self.avatar_label.setVisible(True)
+
+    def _open_profile(self):
+        """Klik w awatar -> otwiera profil zalogowanego gracza w przeglądarce."""
+        if not self.steamid:
+            return
+        QDesktopServices.openUrl(QUrl(f"https://steamcommunity.com/profiles/{self.steamid}"))
+        self._log("↗ Otwieram profil Steam.", ACCENT)
 
     def _wallet_ready(self, cents, symbol):
         if cents is None or cents < 0:

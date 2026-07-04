@@ -7,9 +7,6 @@ name: Release .exe
 on:
   push:
     tags: ['v*']
-    # bootstrap przed merge do master: build z gałęzi PR; Release powstaje
-    # tylko gdy wiadomość commita zawiera marker `[release vX.Y.Z]`
-    branches: ['claude/steam-dupe-seller-gui-eefsm7']
   workflow_dispatch:
     inputs:
       tag:

@@ -11,8 +11,6 @@ Aplikacja okienkowa na Windows i skrypt CLI. Bez przeglądarki, na czystym `requ
 ![Platforma](https://img.shields.io/badge/Windows-64--bit-2a3245?style=for-the-badge)
 &nbsp;
 ![Licencja](https://img.shields.io/badge/licencja-MIT-3ddc84?style=for-the-badge)
-&nbsp;
-![Pobrania](https://img.shields.io/github/downloads/PiotrKajor/DupeDealer/total?style=for-the-badge&label=pobrania&color=ffb454)
 
 ![Zrzut ekranu aplikacji](docs/screenshot.png)
 

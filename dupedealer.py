@@ -13,10 +13,61 @@ Kluczowe kroki są funkcjami (używa ich też GUI — dupedealer_gui.py):
 make_session / fetch_inventory / marketable_items / pick_duplicates /
 fetch_price / sell_item.
 """
-import argparse, os, re, sys, time
+import argparse, json, os, re, sys, time
 from collections import Counter
 import requests
 import steam_auth
+
+# CDN obrazków ekonomii Steam — do niego doklejamy `icon_url` z opisu przedmiotu.
+STEAM_IMAGE_BASE = "https://community.cloudflare.steamstatic.com/economy/image/"
+
+# Numeryczne kody walut portfela (ECurrencyCode) -> symbol do wyświetlenia.
+# Nieznany kod = pusty symbol (pokażemy samą kwotę). PL to 6 = zł.
+WALLET_SYMBOLS = {
+    1: '$', 2: '£', 3: '€', 4: 'CHF', 5: '₽', 6: 'zł', 7: 'R$', 8: '¥',
+    9: 'kr', 20: 'CA$', 21: 'A$', 22: 'NZ$', 23: '¥', 24: '₹', 28: 'R',
+    29: 'HK$', 30: 'NT$', 41: 'лв', 43: 'Kč', 44: 'kr', 45: 'Ft', 46: 'lei',
+}
+
+
+def image_url(icon: str, size: int = None) -> str:
+    """Buduje pełny URL obrazka przedmiotu z `icon_url`/`icon_url_large` z ekwipunku.
+
+    `size` (opcjonalnie) dokleja żądany wymiar w px, np. 96 -> `/96fx96f`.
+    Pusty `icon` -> pusty string (brak grafiki dla przedmiotu).
+    """
+    if not icon:
+        return ''
+    url = STEAM_IMAGE_BASE + icon
+    return f"{url}/{size}fx{size}f" if size else url
+
+
+def fetch_wallet(s):
+    """Saldo portfela Steam -> (grosze/centy, symbol_waluty).
+
+    Parsuje `g_rgWalletInfo` ze strony /market/ (tam Steam wstrzykuje saldo w JS).
+    Zwraca (None, '') gdy się nie uda — np. sesja wygasła albo brak portfela.
+    """
+    try:
+        html = s.get("https://steamcommunity.com/market/", timeout=30).text
+    except Exception:
+        return None, ''
+    m = re.search(r'g_rgWalletInfo\s*=\s*(\{.*?\})\s*;', html)
+    if m:
+        try:
+            info = json.loads(m.group(1))
+            bal = info.get('wallet_balance')
+            if bal is not None:
+                cur = info.get('wallet_currency')
+                sym = WALLET_SYMBOLS.get(int(cur), '') if cur is not None else ''
+                return int(bal), sym
+        except (ValueError, TypeError):
+            pass
+    # awaryjnie: sformatowane saldo w nagłówku strony (symbol nieznany — zostawiamy sam tekst)
+    m = re.search(r'id="header_wallet_balance"[^>]*>([^<]+)<', html)
+    if m:
+        return parse_price(m.group(1)), ''
+    return None, ''
 
 
 def buyer_price_to_receive(buyer_cents: int) -> int:
@@ -59,9 +110,10 @@ def fetch_inventory(s, steamid, appid, contextid):
 
 
 def marketable_items(inv, types):
-    """Lista {'assetid','name'} marketable przedmiotów pasujących do filtra typów.
+    """Lista {'assetid','name','icon','icon_large'} marketable przedmiotów pasujących do filtra.
 
     `types` jak w --types: nazwy po przecinku, pusty string = wszystkie marketable.
+    `icon`/`icon_large` to hashe z `icon_url`/`icon_url_large` (pełny URL: image_url()).
     """
     desc = {(d['classid'], d['instanceid']): d for d in inv['descriptions']}
     wanted = [t.strip() for t in types.split(',') if t.strip()]  # pusty = bez filtra typu
@@ -70,7 +122,9 @@ def marketable_items(inv, types):
         d = desc[(a['classid'], a['instanceid'])]
         typ = d.get('type', '')
         if d.get('marketable') and (not wanted or any(w in typ for w in wanted)):
-            items.append({'assetid': a['assetid'], 'name': d['market_hash_name']})
+            items.append({'assetid': a['assetid'], 'name': d['market_hash_name'],
+                          'icon': d.get('icon_url', ''),
+                          'icon_large': d.get('icon_url_large', '')})
     return items
 
 
@@ -139,6 +193,10 @@ def main():
     session = ck['sessionid']
 
     s = make_session(ck)
+
+    bal, sym = fetch_wallet(s)
+    if bal is not None:
+        print(f"Portfel Steam: {bal // 100},{bal % 100:02d} {sym}".rstrip())
 
     inv = fetch_inventory(s, steamid, appid, contextid)
     if not inv or not inv.get('assets'):

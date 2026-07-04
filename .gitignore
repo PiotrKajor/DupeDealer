@@ -1,5 +1,6 @@
 steam-seller-venv/
 venv/
+.venv/
 __pycache__/
 *.pyc
 .steam_refresh_token

@@ -24,6 +24,7 @@ ACCENT_PRESSED = "#3798e2"
 GREEN = "#3ddc84"
 RED = "#ff5d6c"
 YELLOW = "#ffb454"
+AVATAR_RADIUS = 17      # połowa boku awatara (34 px) — okrągła obwódka
 
 # --- ikonki (PNG base64) generowane raz, offline; kolor DIM/akcent wtopiony ---
 _ARROW_DOWN = "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAGCAYAAAD68A/GAAAA2klEQVR4nFXOMWoCQRgF4Df7j4q7prDxCF4gJ/ACAQPaWKRyCxvLIFtYGgUDihi0stAII3iCQJoUuUdKCxvdmXWd/S0Wg77q8fiKJwaT9cLNey86PJwhhMRNOEms6xUoDMO1cyyRr/Xxy/UeJDOf/xGnSBv9I0zcFADQm66KOZH5JSnLkTEWgMhmc06S2D99wmPQru+cmlLUaTX2sYmerLV7KSUREZjZRKe4GrTrO6UUAQCupT9aVt4/NvFovuW38fIZALrd77vf8GezTIpXr/3x5xAAfD/dAOACgyBcM24VpbIAAAAASUVORK5CYII="
@@ -73,6 +74,12 @@ QMainWindow, QDialog, QMessageBox {{ background: {BG}; }}
 #AppSubtitle {{ color: {TEXT_DIM}; font-size: 12px; }}
 #StatusDot {{ font-size: 15px; }}
 #StatusLabel {{ font-weight: 600; }}
+#WalletLabel {{ color: {GREEN}; font-weight: 700; font-size: 12px; }}
+#Avatar {{
+    border: 2px solid {BORDER};
+    border-radius: {AVATAR_RADIUS}px;
+    background: {SURFACE2};
+}}
 #HintLabel {{ color: {TEXT_DIM}; }}
 
 #Card {{

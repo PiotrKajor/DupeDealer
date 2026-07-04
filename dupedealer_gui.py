@@ -12,6 +12,7 @@ Steam Mobile (Potwierdzenia -> Zatwierdź wszystko).
 Uruchomienie: python dupedealer_gui.py
 Build .exe:   build.bat (PyInstaller, patrz README)
 """
+import base64
 import os
 import re
 import sys
@@ -23,8 +24,9 @@ import dupedealer as core
 import tiny_qr
 from gui_theme import build_qss, ACCENT, GREEN, RED, TEXT_DIM, YELLOW
 
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor, QIcon, QImage, QPixmap
+from PySide6.QtCore import Qt, QSize, QThread, Signal
+from PySide6.QtGui import (QColor, QIcon, QImage, QPainter, QPainterPath,
+                           QPixmap)
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDoubleSpinBox, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit,
@@ -54,15 +56,54 @@ def resource_path(name):
 
 
 def fmt_cents(cents, suffix):
-    return f"{cents // 100},{cents % 100:02d} {suffix}"
+    return f"{cents // 100},{cents % 100:02d} {suffix}".rstrip()
+
+
+AVATAR_SIZE = 34        # bok awatara w nagłówku (px)
+THUMB_SIZE = 32         # bok miniatury przedmiotu w tabeli (px)
+FULL_MAX = 220          # maks. szerokość pełnego obrazka w dymku po najechaniu (px)
+
+
+def circular_pixmap(data, size):
+    """Bajty obrazka -> okrągły QPixmap `size`×`size` (awatar). None gdy dane złe."""
+    src = QPixmap()
+    if not data or not src.loadFromData(data):
+        return None
+    src = src.scaled(size, size, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    out = QPixmap(size, size)
+    out.fill(Qt.transparent)
+    p = QPainter(out)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    path = QPainterPath()
+    path.addEllipse(0, 0, size, size)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, src)
+    p.end()
+    return out
+
+
+def thumb_and_tooltip(data):
+    """Bajty obrazka -> (miniatura QPixmap, HTML dymka z pełnym obrazkiem).
+
+    Pełny obraz idzie do dymka jako data-URI base64 — dzięki temu Qt renderuje go
+    bez dogrywania niczego z sieci przy najechaniu. (None, '') gdy dane są złe.
+    """
+    pix = QPixmap()
+    if not data or not pix.loadFromData(data):
+        return None, ''
+    thumb = pix.scaled(THUMB_SIZE, THUMB_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    b64 = base64.b64encode(data).decode('ascii')
+    width = min(pix.width(), FULL_MAX)
+    tip = f'<img src="data:image/png;base64,{b64}" width="{width}">'
+    return thumb, tip
 
 
 # ---------------------------------------------------------------- workery ---
 class AuthWorker(QThread):
     """Sprawdzenie sesji / logowanie push / logowanie QR — wszystko poza GUI-wątkiem."""
     status = Signal(str)
-    qr_ready = Signal(str)          # challenge_url do narysowania
-    done = Signal(object, str)      # cookies, persona
+    qr_ready = Signal(str)              # challenge_url do narysowania
+    done = Signal(object, str, str)     # cookies, persona, avatar_url
     failed = Signal(str)
 
     def __init__(self, mode, account=None, password=None, parent=None):
@@ -89,21 +130,29 @@ class AuthWorker(QThread):
                 rt = steam_auth.poll_until_approved(resp, should_cancel=lambda: self._cancel)
                 steam_auth._save_token(rt)
                 ck = steam_auth.web_cookies(rt)
-            self.done.emit(ck, self._persona(ck))
+            persona, avatar = self._profile(ck)
+            self.done.emit(ck, persona, avatar)
         except Exception as e:
             self.failed.emit(str(e))
         finally:
             self._password = None   # hasło tylko w pamięci, na czas logowania
 
     @staticmethod
-    def _persona(ck):
+    def _profile(ck):
+        """(nick, url_awatara) z publicznego XML profilu. Awatar może być pusty."""
+        persona, avatar = ck['_steamid'], ''
         try:
             r = requests.get(f"https://steamcommunity.com/profiles/{ck['_steamid']}/?xml=1",
                              timeout=15)
             m = re.search(r'<steamID><!\[CDATA\[(.*?)\]\]>', r.text)
-            return m.group(1) if m else ck['_steamid']
+            if m:
+                persona = m.group(1)
+            a = re.search(r'<avatarMedium><!\[CDATA\[(.*?)\]\]>', r.text)
+            if a:
+                avatar = a.group(1)
         except Exception:
-            return ck['_steamid']
+            pass
+        return persona, avatar
 
 
 class InventoryWorker(QThread):
@@ -123,10 +172,14 @@ class InventoryWorker(QThread):
                 return
             items = core.marketable_items(inv, self.types)
             counts, to_sell = core.pick_duplicates(items)
+            icons = {}                       # name -> hash obrazka (preferuj duży)
+            for it in items:
+                icons.setdefault(it['name'], it.get('icon_large') or it.get('icon') or '')
             groups = {}
             for c in to_sell:
                 groups.setdefault(c['name'], []).append(c['assetid'])
-            rows = [{'name': n, 'total': counts[n], 'assets': ids}
+            rows = [{'name': n, 'total': counts[n], 'assets': ids,
+                     'icon': icons.get(n, '')}
                     for n, ids in groups.items()]
             self.loaded.emit(rows, len(items), len(counts))
         except Exception as e:
@@ -212,6 +265,51 @@ class SellWorker(QThread):
                 while time.time() < end and not self._cancel:
                     time.sleep(0.1)
         self.done.emit(ok_n, fail_n, total)
+
+
+class WalletWorker(QThread):
+    """Odczyt salda portfela Steam poza GUI-wątkiem (jedno żądanie do /market/)."""
+    ready = Signal(int, str)        # grosze/centy (-1 = błąd/brak), symbol waluty
+
+    def __init__(self, session, parent=None):
+        super().__init__(parent)
+        self.s = session
+
+    def run(self):
+        try:
+            cents, sym = core.fetch_wallet(self.s)
+        except Exception:
+            cents, sym = None, ''
+        self.ready.emit(cents if cents is not None else -1, sym)
+
+
+class ImageWorker(QThread):
+    """Pobiera obrazki (awatar, miniatury) sekwencyjnie poza GUI-wątkiem.
+
+    `jobs` = lista (klucz, url). Dla każdego emituje ready(klucz, bajty) —
+    bajty puste przy błędzie/pustym URL. QPixmap budujemy dopiero w GUI-wątku.
+    """
+    ready = Signal(str, bytes)      # klucz, bajty obrazka
+
+    def __init__(self, jobs, parent=None):
+        super().__init__(parent)
+        self.jobs = list(jobs)
+        self._cancel = False
+
+    def cancel(self):
+        self._cancel = True
+
+    def run(self):
+        for key, url in self.jobs:
+            if self._cancel:
+                return
+            data = b''
+            if url:
+                try:
+                    data = requests.get(url, timeout=20).content
+                except Exception:
+                    data = b''
+            self.ready.emit(key, data)
 
 
 # ---------------------------------------------------------------- dialogi ---
@@ -306,7 +404,8 @@ class NumericItem(QTableWidgetItem):
 
 
 class MainWindow(QMainWindow):
-    COL_CHECK, COL_NAME, COL_TOTAL, COL_SELL, COL_PRICE, COL_RECV, COL_ASSET = range(7)
+    (COL_CHECK, COL_ICON, COL_NAME, COL_TOTAL, COL_SELL,
+     COL_PRICE, COL_RECV, COL_ASSET) = range(8)
 
     def __init__(self):
         super().__init__()
@@ -323,6 +422,8 @@ class MainWindow(QMainWindow):
         self.rows = {}               # name -> {'total','assets','buyer','items':{...}}
         self._workers = []
         self._price_worker = None
+        self._thumb_worker = None
+        self._thumb_cache = {}       # url obrazka -> (miniatura QPixmap, HTML dymka)
         self._filling = False
         self._qr_dialog = None
 
@@ -349,10 +450,22 @@ class MainWindow(QMainWindow):
         tbox.addWidget(t1); tbox.addWidget(t2)
         h.addLayout(tbox)
         h.addStretch(1)
+        # awatar konta (ukryty do zalogowania) + saldo portfela
+        self.avatar_label = QLabel()
+        self.avatar_label.setObjectName("Avatar")
+        self.avatar_label.setFixedSize(AVATAR_SIZE, AVATAR_SIZE)
+        self.avatar_label.setVisible(False)
+        h.addWidget(self.avatar_label)
+        h.addSpacing(8)
         self.status_dot = QLabel("●"); self.status_dot.setObjectName("StatusDot")
+        idbox = QVBoxLayout(); idbox.setSpacing(0)
         self.status_label = QLabel("Sprawdzam logowanie…")
         self.status_label.setObjectName("StatusLabel")
-        h.addWidget(self.status_dot); h.addWidget(self.status_label)
+        self.wallet_label = QLabel("")
+        self.wallet_label.setObjectName("WalletLabel")
+        self.wallet_label.setVisible(False)
+        idbox.addWidget(self.status_label); idbox.addWidget(self.wallet_label)
+        h.addWidget(self.status_dot); h.addLayout(idbox)
         h.addSpacing(12)
         self.btn_login_push = QPushButton("Zaloguj (push w apce)")
         self.btn_login_push.clicked.connect(self._login_push)
@@ -401,15 +514,17 @@ class MainWindow(QMainWindow):
         v.addWidget(card)
 
         # tabela
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["", "Nazwa", "Ilość", "Do sprzedania", "Cena rynku", "Dostajesz", "Asset ID"])
+            ["", "", "Nazwa", "Ilość", "Do sprzedania", "Cena rynku", "Dostajesz", "Asset ID"])
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(self.COL_NAME, QHeaderView.Stretch)
-        for col in (self.COL_CHECK, self.COL_TOTAL, self.COL_SELL,
+        for col in (self.COL_CHECK, self.COL_ICON, self.COL_TOTAL, self.COL_SELL,
                     self.COL_PRICE, self.COL_RECV):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        self.table.setIconSize(QSize(THUMB_SIZE, THUMB_SIZE))
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(THUMB_SIZE + 8)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -483,7 +598,7 @@ class MainWindow(QMainWindow):
         w.failed.connect(lambda e: self._auth_out())
         self._track(w)
 
-    def _auth_ok(self, ck, persona):
+    def _auth_ok(self, ck, persona, avatar=''):
         self.steamid, self.sessionid = ck['_steamid'], ck['sessionid']
         self.session = core.make_session(ck)
         self._set_status(f"Zalogowany jako {persona}", GREEN)
@@ -494,16 +609,41 @@ class MainWindow(QMainWindow):
             self._qr_dialog.accept()
             self._qr_dialog = None
         self._log(f"✓ Zalogowano jako {persona}.", GREEN)
+        if avatar:
+            w = ImageWorker([('__avatar__', avatar)])
+            w.ready.connect(self._avatar_ready)
+            self._track(w)
+        ww = WalletWorker(self.session)
+        ww.ready.connect(self._wallet_ready)
+        self._track(ww)
 
     def _auth_out(self, msg="Wylogowany"):
         self.session = None
         self._set_status(msg, RED)
+        self.avatar_label.clear()
+        self.avatar_label.setVisible(False)
+        self.wallet_label.clear()
+        self.wallet_label.setVisible(False)
         self.btn_load.setEnabled(False)
         self.btn_login_push.setEnabled(True)
         self.btn_login_qr.setEnabled(True)
         if self._qr_dialog:
             self._qr_dialog.close()
             self._qr_dialog = None
+
+    # ------------------------------------------------------- awatar / portfel ---
+    def _avatar_ready(self, key, data):
+        pix = circular_pixmap(data, AVATAR_SIZE)
+        if pix:
+            self.avatar_label.setPixmap(pix)
+            self.avatar_label.setVisible(True)
+
+    def _wallet_ready(self, cents, symbol):
+        if cents is None or cents < 0:
+            self.wallet_label.setVisible(False)
+            return
+        self.wallet_label.setText(f"Portfel: {fmt_cents(cents, symbol)}")
+        self.wallet_label.setVisible(True)
 
     def _login_failed(self, err):
         self._auth_out()
@@ -582,6 +722,8 @@ class MainWindow(QMainWindow):
             check = QTableWidgetItem()
             check.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             check.setCheckState(Qt.Checked)          # domyślnie wszystko zaznaczone
+            icon_it = QTableWidgetItem()
+            icon_it.setTextAlignment(Qt.AlignCenter)
             name_it = QTableWidgetItem(name)
             total_it = NumericItem(str(rec['total']))
             total_it.setData(Qt.UserRole, rec['total'])
@@ -597,14 +739,16 @@ class MainWindow(QMainWindow):
             recv_it.setForeground(QColor(TEXT_DIM))
             asset_it = QTableWidgetItem(", ".join(rec['assets']))
             asset_it.setForeground(QColor(TEXT_DIM))
-            for col, it in ((self.COL_CHECK, check), (self.COL_NAME, name_it),
-                            (self.COL_TOTAL, total_it), (self.COL_SELL, sell_it),
-                            (self.COL_PRICE, price_it), (self.COL_RECV, recv_it),
-                            (self.COL_ASSET, asset_it)):
+            for col, it in ((self.COL_CHECK, check), (self.COL_ICON, icon_it),
+                            (self.COL_NAME, name_it), (self.COL_TOTAL, total_it),
+                            (self.COL_SELL, sell_it), (self.COL_PRICE, price_it),
+                            (self.COL_RECV, recv_it), (self.COL_ASSET, asset_it)):
                 self.table.setItem(i, col, it)
             self.rows[name] = {'total': rec['total'], 'assets': rec['assets'],
                                'buyer': self.price_cache.get(name),
-                               'check': check, 'price_it': price_it, 'recv_it': recv_it}
+                               'icon': rec.get('icon', ''),
+                               'check': check, 'icon_it': icon_it, 'name_it': name_it,
+                               'price_it': price_it, 'recv_it': recv_it}
         self.table.setSortingEnabled(True)
         self._filling = False
         self.btn_load.setEnabled(True)
@@ -618,7 +762,46 @@ class MainWindow(QMainWindow):
         self.btn_dry.setEnabled(True)
         self.btn_sell.setEnabled(True)
         self._update_summary()
+        self._load_thumbnails()
         self._start_pricing()
+
+    # ------------------------------------------------------------- miniatury ---
+    def _load_thumbnails(self):
+        """Wrzuca miniatury z cache od razu, resztę dociąga jeden ImageWorker."""
+        self._cancel_worker(ImageWorker)
+        jobs = []
+        for name, rec in self.rows.items():
+            url = core.image_url(rec.get('icon', ''))
+            if not url:
+                continue
+            cached = self._thumb_cache.get(url)
+            if cached:
+                self._apply_thumb(rec, *cached)
+            else:
+                jobs.append((name, url))
+        if not jobs:
+            return
+        w = ImageWorker(jobs)
+        w.ready.connect(self._thumb_ready)
+        self._thumb_worker = w
+        self._track(w)
+
+    def _thumb_ready(self, name, data):
+        rec = self.rows.get(name)
+        if not rec:
+            return
+        thumb, tip = thumb_and_tooltip(data)
+        if not thumb:
+            return
+        self._thumb_cache[core.image_url(rec.get('icon', ''))] = (thumb, tip)
+        self._apply_thumb(rec, thumb, tip)
+
+    def _apply_thumb(self, rec, thumb, tip):
+        self._filling = True
+        rec['icon_it'].setData(Qt.DecorationRole, thumb)
+        rec['icon_it'].setToolTip(tip)
+        rec['name_it'].setToolTip(tip)      # dymek również nad nazwą przedmiotu
+        self._filling = False
 
     # --------------------------------------------------------------- wycena ---
     def _start_pricing(self):

@@ -43,6 +43,8 @@ bot nigdy nie robi tego za Ciebie.
 - ✅ **Bezpieczna logika** — zawsze zostawia 1 sztukę rodzaju, wystawia tylko nadmiar.
 - 🖥️ **Nowoczesne GUI** (PySide6, ciemny motyw): sortowalna tabela z checkboxami, wycena
   w tle z paskiem postępu, podgląd i wystawianie z potwierdzeniem.
+- 👤 **Panel konta po zalogowaniu** — awatar profilu i saldo portfela Steam w nagłówku.
+- 🖼️ **Grafika przedmiotu** — miniatura w tabeli, a po najechaniu pełnowymiarowy obraz w dymku.
 - 🔐 **Logowanie bez ciasteczek** — push do apki albo kod QR; sesja odtwarzana po cichu
   z refresh tokenu (ważny wiele miesięcy).
 - 🎮 **Wiele ekwipunków** — karty (753/6), TF2 (440/2), CS2 (730/2), Dota 2 (570/2) + filtr typów.

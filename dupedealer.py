@@ -138,14 +138,29 @@ def pick_duplicates(items):
     return counts, to_sell
 
 
+class RateLimited(Exception):
+    """Steam odrzucił zapytanie o cenę (HTTP 429 — za dużo żądań z tego IP).
+
+    priceoverview ma limit ~20 żądań/min na IP. Po jego przekroczeniu KAŻDE kolejne
+    zapytanie w oknie blokady dostaje 429 (i przedłuża blokadę) — wołający powinien
+    wyhamować, a nie pukać dalej.
+    """
+
+
 def fetch_price(s, appid, name, currency):
     """priceoverview -> cena kupującego w groszach (0 = brak oferty na rynku).
 
-    Ostro rate-limitowane (~20 żądań/min) — wołający MUSI trzymać odstęp (--delay).
+    Rzuca RateLimited przy HTTP 429. Odporne na pustą odpowiedź (`null`): przy 429
+    ciało to `null`, więc naiwne `.json()['lowest_price']` sypało `AttributeError`.
     """
-    r = s.get("https://steamcommunity.com/market/priceoverview/",
-              params={'appid': appid, 'market_hash_name': name, 'currency': currency},
-              timeout=30).json()
+    resp = s.get("https://steamcommunity.com/market/priceoverview/",
+                 params={'appid': appid, 'market_hash_name': name, 'currency': currency},
+                 timeout=30)
+    if resp.status_code == 429:
+        raise RateLimited()
+    r = resp.json()
+    if not isinstance(r, dict):          # 429/awaria zwraca `null` -> brak danych
+        return 0
     return parse_price(r['lowest_price']) if r.get('lowest_price') else 0
 
 
@@ -211,7 +226,12 @@ def main():
     for c in to_sell:
         name = c['name']
         if name not in price_cache:
-            price_cache[name] = fetch_price(s, appid, name, args.currency)
+            try:
+                price_cache[name] = fetch_price(s, appid, name, args.currency)
+            except RateLimited:
+                sys.exit("Steam ogranicza zapytania o ceny (HTTP 429 — za dużo żądań "
+                         "z tego IP). Odczekaj kilkanaście–kilkadziesiąt minut i spróbuj "
+                         "ponownie (większy --delay pomaga).")
             time.sleep(args.delay)  # ponytail: stały odstęp, priceoverview ~20 żądań/min
         buyer = price_cache[name] - args.undercut
         receive = buyer_price_to_receive(buyer)

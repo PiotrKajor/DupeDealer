@@ -193,8 +193,9 @@ class InventoryWorker(QThread):
 class PriceWorker(QThread):
     """Wycena leniwa: priceoverview jest ostro rate-limitowane (~20/min),
     więc stały odstęp `delay` między żądaniami i cache po nazwie."""
-    priced = Signal(str, int)       # name, buyer_cents (-1 = błąd)
+    priced = Signal(str, int)       # name, buyer_cents (-1 = błąd, -3 = limit Steama)
     progress = Signal(int, int)
+    rate_limited = Signal()         # Steam 429 — wycena przerwana, nie pukamy dalej
     done = Signal()
 
     def __init__(self, session, appid, currency, names, cache, delay, parent=None):
@@ -223,8 +224,12 @@ class PriceWorker(QThread):
                 cents = core.fetch_price(self.s, self.appid, name, self.currency)
                 self.cache[name] = cents
                 self.priced.emit(name, cents)
+            except core.RateLimited:
+                self.priced.emit(name, -3)   # ta pozycja: limit Steama
+                self.rate_limited.emit()     # przerwij — dalsze pukanie przedłuża blokadę
+                return
             except Exception:
-                self.priced.emit(name, -1)   # np. rate limit — nie cache'ujemy
+                self.priced.emit(name, -1)   # inny błąd — nie cache'ujemy
             self.progress.emit(i, len(todo))
             if i < len(todo):
                 self._sleep()
@@ -870,9 +875,38 @@ class MainWindow(QMainWindow):
                         self.delay_spin.value())
         w.priced.connect(self._price_ready)
         w.progress.connect(self._price_progress)
+        w.rate_limited.connect(self._rate_limited)
         w.done.connect(self._pricing_done)
         self._price_worker = w
         self._track(w)
+
+    def _rate_limited(self):
+        """Steam 429: oznacz niewycenione pozycje jako „limit", pokaż wyraźny komunikat."""
+        if self.sender() is not self._price_worker:
+            return                      # sygnał ze starego, anulowanego workera
+        self._filling = True
+        for rec in self.rows.values():
+            if rec['price_it'].data(Qt.UserRole) == -2:   # nadal „…" (niewycenione)
+                rec['buyer'] = None
+                rec['price_it'].setText("limit — poczekaj")
+                rec['price_it'].setData(Qt.UserRole, -3)
+                rec['price_it'].setForeground(QColor(YELLOW))
+        self._filling = False
+        self._recompute_receives()
+        self.progress_label.setText("Wstrzymano — limit zapytań Steam (429).")
+        msg = ("Steam ogranicza zapytania o ceny: odpowiada HTTP 429 'za dużo żądań' "
+               "z Twojego adresu IP. To limit rynku (~20 zapytań/min), nie błąd konta "
+               "ani sesji.")
+        self._log("⚠ " + msg + " Wstrzymuję wycenę, żeby nie przedłużać blokady — "
+                  "odczekaj kilkanaście–kilkadziesiąt minut i wczytaj ekwipunek ponownie "
+                  "(większy odstęp zmniejsza ryzyko).", YELLOW)
+        QMessageBox.warning(
+            self, "Limit zapytań Steam",
+            msg + "\n\nWycena została wstrzymana — każde kolejne zapytanie w trakcie "
+            "blokady tylko ją przedłuża.\n\nCo zrobić:\n"
+            "• odczekaj kilkanaście–kilkadziesiąt minut,\n"
+            "• nie przeładowuj ekwipunku wielokrotnie,\n"
+            "• zwiększ 'Odstęp' (np. do 5–6 s) przed kolejną próbą.")
 
     def _cancel_worker(self, cls):
         for w in list(self._workers):
@@ -898,7 +932,11 @@ class MainWindow(QMainWindow):
         rec['buyer'] = cents if cents >= 0 else None
         _, suffix = self._currency()
         self._filling = True
-        if cents < 0:
+        if cents == -3:
+            rec['price_it'].setText("limit — poczekaj")
+            rec['price_it'].setData(Qt.UserRole, -3)
+            rec['price_it'].setForeground(QColor(YELLOW))
+        elif cents < 0:
             rec['price_it'].setText("błąd")
             rec['price_it'].setData(Qt.UserRole, -1)
             rec['price_it'].setForeground(QColor(RED))

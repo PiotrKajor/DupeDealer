@@ -167,10 +167,18 @@ class InventoryWorker(QThread):
         super().__init__(parent)
         self.s, self.steamid = session, steamid
         self.appid, self.contextid, self.types = appid, contextid, types
+        self._cancel = False
+
+    def cancel(self):
+        """Po anulowaniu wynik jest porzucany — inaczej wycena ruszyłaby mimo wszystko
+        i (po czyszczeniu danych) odtworzyła cache na dysku."""
+        self._cancel = True
 
     def run(self):
         try:
             inv = core.fetch_inventory(self.s, self.steamid, self.appid, self.contextid)
+            if self._cancel:
+                return
             if not inv or not inv.get('assets'):
                 self.failed.emit("Pusty/niedostępny ekwipunek — sesja mogła wygasnąć.")
                 return
@@ -185,9 +193,11 @@ class InventoryWorker(QThread):
             rows = [{'name': n, 'total': counts[n], 'assets': ids,
                      'icon': icons.get(n, '')}
                     for n, ids in groups.items()]
-            self.loaded.emit(rows, len(items), len(counts))
+            if not self._cancel:
+                self.loaded.emit(rows, len(items), len(counts))
         except Exception as e:
-            self.failed.emit(f"Błąd pobierania ekwipunku: {e}")
+            if not self._cancel:
+                self.failed.emit(f"Błąd pobierania ekwipunku: {e}")
 
 
 class PriceWorker(QThread):
@@ -539,7 +549,12 @@ class MainWindow(QMainWindow):
         self.btn_login_push.clicked.connect(self._login_push)
         self.btn_login_qr = QPushButton("Zaloguj (QR)")
         self.btn_login_qr.clicked.connect(self._login_qr)
+        self.btn_purge = QPushButton("Usuń moje dane")
+        self.btn_purge.setToolTip("Kasuje z tego komputera wszystko, co program zapisał: "
+                                  "zapamiętane logowanie, cache cen i raport diagnostyczny")
+        self.btn_purge.clicked.connect(self._purge_data)
         h.addWidget(self.btn_login_push); h.addWidget(self.btn_login_qr)
+        h.addWidget(self.btn_purge)
         v.addWidget(header)
 
         # parametry + wczytanie ekwipunku
@@ -698,6 +713,68 @@ class MainWindow(QMainWindow):
         ww = WalletWorker(self.session)
         ww.ready.connect(self._wallet_ready)
         self._track(ww)
+
+    def _purge_data(self):
+        """Kasuje z dysku wszystko, co program zapisał (odpowiednik odinstalowania danych).
+
+        Najpierw zatrzymuje workery i czyści cache w pamięci — inaczej kończąca się
+        wycena zapisałaby prices.json z powrotem zaraz po skasowaniu.
+        """
+        opisy = {'refresh_token': "zapamiętane logowanie",
+                 'prices.json': "cache cen",
+                 'dupedealer-diag.txt': "raport diagnostyczny"}
+        paths = core.stored_paths()
+        if not paths:
+            QMessageBox.information(self, "Usuń moje dane",
+                                    "Program nie ma nic zapisanego na tym komputerze.")
+            return
+
+        lista = "\n".join(
+            f"• {opisy.get(os.path.basename(p), os.path.basename(p))}  "
+            f"({os.path.getsize(p) // 1024 or 1} KB)\n     {p}" for p in paths)
+        ret = QMessageBox.question(
+            self, "Usunąć dane programu?",
+            f"Zostanie skasowane z tego komputera:\n\n{lista}\n\n"
+            "Zostaniesz wylogowany i przy następnym uruchomieniu trzeba będzie zalogować "
+            "się od nowa (push w apce albo QR).\n\n"
+            "Twoje przedmioty i wystawione oferty na Steamie pozostają nietknięte — "
+            "to czyści wyłącznie dane zapisane lokalnie przez DupeDealera.",
+            QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+        if ret != QMessageBox.Yes:
+            return
+
+        for cls in (PriceWorker, BulkPriceWorker, InventoryWorker):
+            self._cancel_worker(cls)
+        self._price_worker = None
+        self.price_cache = {}
+        self._cache_key = None
+
+        removed, errors = core.purge_data()
+        for p in removed:
+            self._log(f"✓ Usunięto: {p}", GREEN)
+        for p, err in errors:
+            self._log(f"✗ Nie udało się usunąć {p}: {err}", RED)
+
+        self.session = None
+        self._auth_out("Dane usunięte — wylogowany")
+        self.table.setRowCount(0)
+        self.rows = {}
+        self.btn_dry.setEnabled(False)
+        self.btn_sell.setEnabled(False)
+        self.progress.setValue(0)
+        self.progress_label.setText("")
+        self._update_summary()
+
+        if errors:
+            QMessageBox.warning(self, "Częściowo usunięte",
+                                "Nie wszystkie pliki udało się skasować — szczegóły w logu "
+                                "na dole okna. Zwykle znaczy to, że plik jest otwarty w innym "
+                                "programie.")
+        else:
+            QMessageBox.information(
+                self, "Dane usunięte",
+                f"Skasowano {len(removed)} plik(i). Program nie trzyma już nic na tym "
+                "komputerze — możesz go teraz po prostu usunąć.")
 
     def _auth_out(self, msg="Wylogowany"):
         self.session = None
@@ -967,11 +1044,9 @@ class MainWindow(QMainWindow):
         """Zapisuje raport o odmowie obok tokenu; zwraca ścieżkę albo '' gdy się nie udało."""
         if not diag:
             return ''
-        base = os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'),
-                            'DupeDealer') if os.name == 'nt' else os.path.expanduser('~')
-        path = os.path.join(base, 'dupedealer-diag.txt')
+        path = core.diag_path()
         try:
-            os.makedirs(base, exist_ok=True)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(f"DupeDealer — odmowa wyceny, {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
                 f.write(diag + "\n")

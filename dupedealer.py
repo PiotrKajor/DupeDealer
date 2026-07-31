@@ -109,11 +109,58 @@ def make_session(cookies):
 PRICE_TTL = 24 * 3600      # ceny kart pełzają groszami — doba w zupełności wystarcza
 
 
+def data_dir():
+    """Katalog danych programu: %APPDATA%\\DupeDealer (Windows) albo ~/.dupedealer."""
+    if os.name == 'nt':
+        return os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'), 'DupeDealer')
+    return os.path.expanduser('~/.dupedealer')
+
+
 def price_cache_path():
-    """Plik cache cen: obok tokenu (%APPDATA%\\DupeDealer na Windowsie)."""
-    base = (os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'), 'DupeDealer')
-            if os.name == 'nt' else os.path.expanduser('~/.dupedealer'))
-    return os.path.join(base, 'prices.json')
+    """Plik cache cen: obok tokenu."""
+    return os.path.join(data_dir(), 'prices.json')
+
+
+def diag_path():
+    """Raport z ostatniej odmowy wyceny."""
+    return os.path.join(data_dir(), 'dupedealer-diag.txt')
+
+
+def stored_paths():
+    """Wszystko, co program zapisał na tym urządzeniu — tylko istniejące pliki.
+
+    Token czytamy z `steam_auth` na bieżąco, bo GUI przestawia jego ścieżkę na starcie
+    (set_token_path) i stała kopia wskazywałaby nie ten plik co trzeba.
+    """
+    paths = [steam_auth.TOKEN_FILE, price_cache_path(), diag_path()]
+    seen, out = set(), []
+    for p in paths:
+        full = os.path.abspath(p)
+        if full not in seen and os.path.isfile(full):
+            seen.add(full)
+            out.append(full)
+    return out
+
+
+def purge_data(paths=None):
+    """Kasuje dane programu z dysku. Zwraca (usunięte, [(ścieżka, błąd)]).
+
+    Świadomie NIE używa rekurencyjnego kasowania katalogu — usuwa wyłącznie znane pliki
+    i dopiero potem pusty katalog. `data_dir()` bierze się ze zmiennej środowiskowej,
+    a rm -rf po czymś takim to proszenie się o wyczyszczenie cudzego folderu.
+    """
+    removed, errors = [], []
+    for p in (stored_paths() if paths is None else paths):
+        try:
+            os.remove(p)
+            removed.append(p)
+        except OSError as e:
+            errors.append((p, str(e)))
+    try:
+        os.rmdir(data_dir())        # tylko gdy pusty — inaczej OSError i zostawiamy
+    except OSError:
+        pass
+    return removed, errors
 
 
 def load_prices(currency, source='market', path=None):
@@ -346,6 +393,17 @@ def selftest():
     assert parse_multisell(html, ['A', 'B', 'C']) == {}, "brakująca pozycja = odmowa mapowania"
     assert parse_multisell(html, ['A', 'X']) == {}, "inny zestaw nazw = odmowa mapowania"
     assert parse_multisell('', ['A']) == {}
+
+    # kasowanie danych: usuwa wskazane pliki, nie wywraca się na brakujących
+    with tempfile.TemporaryDirectory() as d:
+        keep = os.path.join(d, 'nie-nasz.txt')
+        gone = os.path.join(d, 'prices.json')
+        for f in (keep, gone):
+            open(f, 'w').close()
+        removed, errors = purge_data([gone, os.path.join(d, 'nie-ma.json')])
+        assert removed == [gone] and len(errors) == 1, (removed, errors)
+        assert not os.path.exists(gone), "wskazany plik ma zniknąć"
+        assert os.path.exists(keep), "nie wolno ruszać plików spoza listy"
     print("selftest OK")
 
 

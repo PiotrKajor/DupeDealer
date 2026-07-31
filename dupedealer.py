@@ -116,7 +116,7 @@ def price_cache_path():
     return os.path.join(base, 'prices.json')
 
 
-def load_prices(currency, path=None):
+def load_prices(currency, source='market', path=None):
     """Wczytuje niewygasłe ceny {nazwa: grosze} dla danej waluty.
 
     Cache TYLKO w pamięci procesu oznaczał, że każde uruchomienie odpytywało Steam od
@@ -129,11 +129,11 @@ def load_prices(currency, path=None):
     except (OSError, ValueError):
         return {}
     now = time.time()
-    return {name: rec['cents'] for name, rec in data.get(str(currency), {}).items()
+    return {name: rec['cents'] for name, rec in data.get(f'{currency}:{source}', {}).items()
             if isinstance(rec, dict) and now - rec.get('ts', 0) < PRICE_TTL}
 
 
-def save_prices(cache, currency, path=None):
+def save_prices(cache, currency, source='market', path=None):
     """Dopisuje ceny do cache na dysku (inne waluty zostawia nietknięte)."""
     path = path or price_cache_path()
     try:
@@ -144,7 +144,7 @@ def save_prices(cache, currency, path=None):
     except (OSError, ValueError):
         data = {}
     now = time.time()
-    data.setdefault(str(currency), {}).update(
+    data.setdefault(f'{currency}:{source}', {}).update(
         {name: {'cents': cents, 'ts': now} for name, cents in cache.items()})
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -153,6 +153,54 @@ def save_prices(cache, currency, path=None):
         return path
     except OSError:
         return ''
+
+
+MULTISELL_URL = "https://steamcommunity.com/market/multisell"
+MULTISELL_BATCH = 40      # tyle nazw naraz mieści się w URL-u bez ryzyka obcięcia
+
+
+def parse_multisell(html, requested):
+    """HTML strony multisell -> {market_hash_name: grosze} (najwyższa oferta kupna).
+
+    Nazwy i ceny siedzą w dwóch osobnych blokach strony, powiązane wyłącznie
+    kolejnością — `data-assetid` w wierszu to identyfikator rynkowy, nie ten z naszego
+    ekwipunku, więc nie da się po nim mapować. Dlatego zanim cokolwiek zwrócimy,
+    sprawdzamy, że obie listy mają tę samą długość i że zestaw nazw dokładnie pokrywa
+    to, o co pytaliśmy. Gdy się nie zgadza (Steam pominął pozycję, zmienił układ
+    strony), zwracamy pustkę — wołający wróci do priceoverview. Zgadywanie
+    przesuniętych cen wystawiłoby karty po cudzych kwotach, a to realna strata.
+    """
+    names = [json.loads(f'"{raw}"') for raw in
+             re.findall(r'"market_hash_name":"((?:[^"\\]|\\.)*)"', html)]
+    # leniwe [^>]*? — zachłanne przeskakiwałoby do ostatniego value= w tekście
+    prices = re.findall(r'name="sell_\d+_price_paid"[^>]*?value="([^"]*)"', html)
+    if not names or len(names) != len(prices) or set(names) != set(requested):
+        return {}
+    return {name: cents for name, raw in zip(names, prices)
+            if (cents := parse_price(raw))}
+
+
+def fetch_prices_multisell(s, appid, contextid, wanted, batch=MULTISELL_BATCH):
+    """Wycena hurtem: JEDNO żądanie na ~40 pozycji zamiast jednego na pozycję.
+
+    Obchodzi limit `priceoverview` (który po przekroczeniu banuje IP na godziny),
+    bo strona multisell wycenia całą listę naraz — 23 duplikaty to 1 żądanie zamiast 23.
+
+    UWAGA na semantykę: zwraca cenę **najwyższej oferty kupna** (sprzedaż od ręki),
+    a nie najniższej oferty sprzedaży jak priceoverview. Bywa zauważalnie niższa
+    (zmierzone: 0,19 zł wobec 0,40 zł), więc te dwa źródła nie mogą trafiać do
+    wspólnego cache ani być mieszane bez poinformowania użytkownika.
+    """
+    names = sorted(set(wanted))
+    out = {}
+    for i in range(0, len(names), batch):
+        chunk = names[i:i + batch]
+        r = s.get(MULTISELL_URL, timeout=45,
+                  params={'appid': appid, 'contextid': contextid, 'items[]': chunk})
+        if r.status_code == 429:
+            raise RateLimited(diag_report(r, s))
+        out.update(parse_multisell(r.text, chunk))
+    return out
 
 
 def fetch_inventory(s, steamid, appid, contextid):
@@ -275,16 +323,29 @@ def selftest():
     import tempfile
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, 'prices.json')
-        save_prices({'A': 24, 'B': 40}, '6', p)
-        assert load_prices('6', p) == {'A': 24, 'B': 40}
-        save_prices({'C': 15}, '6', p)
-        assert load_prices('6', p) == {'A': 24, 'B': 40, 'C': 15}   # dopisuje, nie nadpisuje
-        assert load_prices('1', p) == {}                            # inna waluta = inny zestaw
+        save_prices({'A': 24, 'B': 40}, '6', path=p)
+        assert load_prices('6', path=p) == {'A': 24, 'B': 40}
+        save_prices({'C': 15}, '6', path=p)
+        assert load_prices('6', path=p) == {'A': 24, 'B': 40, 'C': 15}  # dopisuje, nie nadpisuje
+        assert load_prices('1', path=p) == {}                       # inna waluta = inny zestaw
+        # ceny z multisell (oferty kupna) są NIŻSZE — nie mogą wyciec do wyceny rynkowej
+        save_prices({'A': 19}, '6', source='buy', path=p)
+        assert load_prices('6', source='buy', path=p) == {'A': 19}
+        assert load_prices('6', path=p)['A'] == 24
         stale = json.load(open(p, encoding='utf-8'))
-        stale['6']['A']['ts'] -= PRICE_TTL + 60                     # postarz jeden wpis
+        stale['6:market']['A']['ts'] -= PRICE_TTL + 60              # postarz jeden wpis
         json.dump(stale, open(p, 'w', encoding='utf-8'))
-        assert load_prices('6', p) == {'B': 40, 'C': 15}, "wygasłe ceny mają odpaść"
-        assert load_prices('6', os.path.join(d, 'nie-ma.json')) == {}
+        assert load_prices('6', path=p) == {'B': 40, 'C': 15}, "wygasłe ceny mają odpaść"
+        assert load_prices('6', path=os.path.join(d, 'nie-ma.json')) == {}
+
+    # multisell: przy jakiejkolwiek niezgodności nazw i cen NIE wolno zgadywać
+    html = ('<input name="sell_1_price_paid" value="0,21 zł">'
+            '<input name="sell_2_price_paid" value="0,13 zł">'
+            '"market_hash_name":"A""market_hash_name":"B"')
+    assert parse_multisell(html, ['A', 'B']) == {'A': 21, 'B': 13}
+    assert parse_multisell(html, ['A', 'B', 'C']) == {}, "brakująca pozycja = odmowa mapowania"
+    assert parse_multisell(html, ['A', 'X']) == {}, "inny zestaw nazw = odmowa mapowania"
+    assert parse_multisell('', ['A']) == {}
     print("selftest OK")
 
 
@@ -300,6 +361,8 @@ def main():
     ap.add_argument('--delay', type=float, default=3.5, help='przerwa między żądaniami (s) — Steam mocno rate-limituje')
     ap.add_argument('--noninteractive', action='store_true',
                     help='tryb cron: gdy logowanie wygasło -> alert TG i wyjście, bez czekania na QR')
+    ap.add_argument('--market-price', action='store_true',
+                    help='wycena rynkowa (najniższa oferta sprzedaży) — 1 zapytanie na pozycję;\n domyślnie hurtem przez multisell: 1 zapytanie na całą listę')
     ap.add_argument('--selftest', action='store_true')
     args = ap.parse_args()
     if args.selftest:
@@ -325,19 +388,36 @@ def main():
 
     print(f"Przedmiotów: {len(cards)}, rodzajów: {len(counts)}, duplikatów do sprzedania: {len(to_sell)}")
 
-    cached = load_prices(args.currency)          # ceny z ostatniej doby — bez pytania Steama
+    source = 'market' if args.market_price else 'buy'
+    cached = load_prices(args.currency, source)   # ceny z ostatniej doby — bez pytania Steama
     price_cache = dict(cached)
     if cached:
         print(f"Cache cen: {len(cached)} pozycji z ostatniej doby.")
+
+    if source == 'buy':
+        # całą listę wycenia JEDNO zapytanie — priceoverview banuje IP, multisell nie
+        todo = sorted({c['name'] for c in to_sell} - set(price_cache))
+        if todo:
+            try:
+                price_cache.update(fetch_prices_multisell(s, appid, contextid, todo))
+            except RateLimited as e:
+                if e.diag:
+                    print("--- odpowiedź Steama ---", e.diag, "---", sep="\n", file=sys.stderr)
+                sys.exit("Steam odrzucił nawet wycenę hurtem (HTTP 429) — jedno zapytanie na "
+                         "całą listę, więc to nie tempo. Ten adres IP ma blokadę rynku; "
+                         "odczekaj ~6 godzin bez ani jednej próby.")
+
     for c in to_sell:
         name = c['name']
         if name not in price_cache:
+            if source == 'buy':
+                print(f"  ! brak ceny hurtowej: {name} — pomijam"); continue
             try:
                 price_cache[name] = fetch_price(s, appid, name, args.currency)
             except RateLimited as e:
                 fresh = {k: v for k, v in price_cache.items() if k not in cached}
                 if fresh:
-                    save_prices(fresh, args.currency)   # co ugrane, to ugrane
+                    save_prices(fresh, args.currency, source)   # co ugrane, to ugrane
                     sys.exit(f"Steam ogranicza zapytania o ceny (HTTP 429 — za dużo żądań "
                              f"z tego IP; wyceniono {len(fresh)}, zapisane w cache). "
                              f"Odczekaj i spróbuj ponownie — kolejny przebieg zapyta "
@@ -365,7 +445,7 @@ def main():
 
     fresh = {k: v for k, v in price_cache.items() if k not in cached}
     if fresh:
-        save_prices(fresh, args.currency)
+        save_prices(fresh, args.currency, source)
 
     if not args.sell:
         print("\nDRY-RUN. Dodaj --sell aby naprawdę wystawić.")

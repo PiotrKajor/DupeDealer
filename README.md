@@ -50,7 +50,11 @@ bot nigdy nie robi tego za Ciebie.
 - 🔐 **Logowanie bez ciasteczek** — push do apki albo kod QR; sesja odtwarzana po cichu
   z refresh tokenu (ważny wiele miesięcy).
 - 🎮 **Wiele ekwipunków** — karty (753/6), TF2 (440/2), CS2 (730/2), Dota 2 (570/2) + filtr typów.
-- 💰 **Wycena z rynku** (`priceoverview`) z odjęciem prowizji Steam (~15%) i opcją *undercut*.
+- ⚡ **Wycena hurtem — cała lista jednym zapytaniem** (domyślna). Omija limit rynku Steam,
+  który po kilkudziesięciu zapytaniach blokuje adres IP na godziny.
+- 💰 **Wycena rynkowa** (`priceoverview`, najniższa oferta sprzedaży) do wyboru — dokładniejsza,
+  ale jedno zapytanie na pozycję. Obie z odjęciem prowizji Steam (~15%) i opcją *undercut*.
+- 💾 **Ceny zapamiętywane na dobę** — kolejne uruchomienia prawie nie pytają Steama.
 - 🧪 **Ten sam silnik w CLI** — dobry do crona; wbudowany `--selftest`.
 
 ---
@@ -118,7 +122,8 @@ python dupedealer.py --sell     # realne wystawienie duplikatów
 | `--types` | `Trading Card` | typy po przecinku; **puste `''` = wszystkie marketable duplikaty** |
 | `--currency` | `6` | waluta wyceny: `6`=PLN, `3`=EUR, `1`=USD |
 | `--undercut` | `0` | o ile groszy zejść poniżej ceny kupującego |
-| `--delay` | `3.5` | przerwa między żądaniami (s) — Steam mocno rate-limituje |
+| `--delay` | `3.5` | przerwa między żądaniami (s) — dotyczy tylko `--market-price` |
+| `--market-price` | off | wycena rynkowa (1 zapytanie/pozycję); domyślnie hurtem (1 zapytanie na całą listę) |
 | `--noninteractive` | off | tryb cron: gdy logowanie wygasło → wyjście (opcjonalny alert Telegram) |
 | `--selftest` | — | testy jednostkowe wyceny/parsera i wyjście |
 
@@ -143,10 +148,19 @@ Wszystko jest opcjonalne — w GUI dane logowania wpisujesz w okienku.
 
 ## Jak liczona jest cena
 
-`priceoverview` zwraca najniższą aktualną ofertę. Funkcja `buyer_price_to_receive()` odejmuje
-**prowizję Steam (~15%**, min. 1 gr dla Steam + 1 gr dla twórcy gry), by wyliczyć kwotę, jaką
-masz *dostać*, żeby kupujący zapłacił nie więcej niż obecny lowest price. Z opcją *undercut*
-schodzisz jeszcze o kilka groszy poniżej. Ceny są cache'owane po nazwie przedmiotu.
+Dostępne są dwa źródła cen:
+
+| Źródło | Co zwraca | Koszt |
+|--------|-----------|-------|
+| **Hurtem** (domyślne) | najwyższą ofertę kupna — sprzedaż od ręki, zwykle nieco niżej | **1 zapytanie na całą listę** |
+| **Rynkowa** | najniższą ofertę sprzedaży (`priceoverview`) — dokładniejsza, wyżej | 1 zapytanie na pozycję |
+
+Funkcja `buyer_price_to_receive()` odejmuje **prowizję Steam (~15%**, min. 1 gr dla Steam
++ 1 gr dla twórcy gry), by wyliczyć kwotę, jaką masz *dostać*, żeby kupujący zapłacił nie
+więcej niż cena odniesienia. Z opcją *undercut* schodzisz jeszcze o kilka groszy poniżej.
+
+Ceny lądują w `prices.json` obok tokenu i są ważne **dobę**, osobno dla każdego źródła
+i waluty (oferty kupna i oferty sprzedaży to różne kwoty — nie wolno ich mieszać).
 
 ## Bezpieczeństwo
 
@@ -162,8 +176,14 @@ schodzisz jeszcze o kilka groszy poniżej. Ceny są cache'owane po nazwie przedm
 Dla osób zaglądających w kod / rozwijających projekt:
 
 - Endpoint ekwipunku wymaga nagłówka **`Referer`** i `count` **≤ 2000** (5000 → HTTP 400).
-- `priceoverview` jest ostro rate-limitowane (~20 żądań/min) — dlatego stały odstęp między
-  żądaniami (`--delay` / suwak *Odstęp*) i cache po nazwie.
+- `priceoverview` jest ostro rate-limitowane: po przekroczeniu limitu Steam **banuje adres IP
+  na ok. 6 godzin**, a ban liczy się od *ostatniej próby*, nie od ostatniego udanego użycia —
+  ponawianie potrafi utrzymywać go w nieskończoność. Stąd wycena hurtem jako domyślna,
+  cache na dysku i odstęp (`--delay` / suwak *Odstęp*) dla trybu rynkowego.
+- Wycena hurtem czyta stronę `market/multisell`. Nazwy i ceny są w niej powiązane wyłącznie
+  kolejnością (`data-assetid` w wierszu to identyfikator rynkowy, nie ten z ekwipunku), więc
+  parser sprawdza zgodność obu list i przy jakiejkolwiek rozbieżności **nie zwraca nic** —
+  zgadywanie przesuniętych cen wystawiłoby karty po cudzych kwotach.
 - Logowanie: `GetPasswordRSAPublicKey` to **GET**, reszta `Begin*/Poll*` to POST;
   `platform_type = WebBrowser (2)`, `os_type = -500`; sesja web idzie przez `finalizelogin`.
 - Kod QR rysuje własny `tiny_qr.py` (zero zależności), zweryfikowany bit-w-bit z referencyjnym

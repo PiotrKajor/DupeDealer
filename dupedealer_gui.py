@@ -236,6 +236,50 @@ class PriceWorker(QThread):
         self.done.emit()
 
 
+class BulkPriceWorker(QThread):
+    """Wycena hurtem przez multisell — całą listę załatwia jedno zapytanie.
+
+    Osobny worker od PriceWorker, bo tamten pyta o pozycję naraz i to on wpędza
+    w blokadę IP; tutaj nie ma czego rozkładać w czasie.
+    """
+    priced = Signal(str, int)
+    rate_limited = Signal(str)
+    done = Signal(int)              # ile pozycji udało się wycenić
+
+    def __init__(self, session, appid, contextid, names, cache, parent=None):
+        super().__init__(parent)
+        self.s, self.appid, self.contextid = session, appid, contextid
+        self.names, self.cache = names, cache
+
+    def cancel(self):
+        pass        # jedno krótkie żądanie — nie ma czego przerywać w połowie
+
+    def run(self):
+        todo = [n for n in self.names if n not in self.cache]
+        for n in self.names:
+            if n in self.cache:
+                self.priced.emit(n, self.cache[n])
+        if not todo:
+            self.done.emit(0)
+            return
+        try:
+            prices = core.fetch_prices_multisell(self.s, self.appid, self.contextid, todo)
+        except core.RateLimited as e:
+            self.rate_limited.emit(e.diag or "")
+            return
+        except Exception:
+            self.done.emit(0)
+            return
+        for name in todo:
+            cents = prices.get(name)
+            if cents:
+                self.cache[name] = cents
+                self.priced.emit(name, cents)
+            else:
+                self.priced.emit(name, -1)      # multisell nie podał ceny dla tej pozycji
+        self.done.emit(len(prices))
+
+
 class SellWorker(QThread):
     sold = Signal(str, str, bool, str, int)  # name, assetid, ok, msg, receive
     progress = Signal(int, int)
@@ -442,6 +486,7 @@ class MainWindow(QMainWindow):
         self.rows = {}               # name -> {'total','assets','buyer','items':{...}}
         self._workers = []
         self._price_worker = None
+        self._price_source = 'buy'   # źródło ostatniej wyceny: 'buy' (hurtem) / 'market'
         self._thumb_worker = None
         self._thumb_cache = {}       # url obrazka -> (miniatura QPixmap, HTML dymka)
         self._filling = False
@@ -523,11 +568,22 @@ class MainWindow(QMainWindow):
         self.undercut_spin.setToolTip("o ile groszy zejść poniżej ceny kupującego")
         self.undercut_spin.valueChanged.connect(self._recompute_receives)
         p.addWidget(self.undercut_spin)
+        p.addWidget(QLabel("Wycena:"))
+        self.src_combo = QComboBox()
+        self.src_combo.addItem("Hurtem (1 zapytanie)", 'buy')
+        self.src_combo.addItem("Rynkowa (1 zapytanie/pozycję)", 'market')
+        self.src_combo.setToolTip(
+            "Hurtem: całą listę wycenia jedno zapytanie do strony multisell — praktycznie "
+            "nie da się wpaść w limit Steama. Ceny to najwyższe oferty kupna, czyli "
+            "sprzedaż od ręki, zwykle nieco niższa.\n"
+            "Rynkowa: najniższa oferta sprzedaży (dokładniejsza, wyższa), ale jedno "
+            "zapytanie na pozycję — to ono ściąga blokadę IP na godziny.")
+        p.addWidget(self.src_combo)
         p.addWidget(QLabel("Odstęp:"))
         self.delay_spin = QDoubleSpinBox(); self.delay_spin.setRange(0.5, 15.0)
-        self.delay_spin.setSingleStep(0.5); self.delay_spin.setValue(3.5)
+        self.delay_spin.setSingleStep(0.5); self.delay_spin.setValue(5.0)
         self.delay_spin.setSuffix(" s")
-        self.delay_spin.setToolTip("przerwa między żądaniami — Steam mocno rate-limituje")
+        self.delay_spin.setToolTip("przerwa między żądaniami — dotyczy tylko wyceny rynkowej")
         p.addWidget(self.delay_spin)
         self.btn_load = QPushButton("Wczytaj ekwipunek")
         self.btn_load.setProperty("class", "accent")
@@ -722,14 +778,17 @@ class MainWindow(QMainWindow):
         if not self.session:
             return
         self._cancel_worker(PriceWorker)
+        self._cancel_worker(BulkPriceWorker)
         appid, ctx, _ = self.app_combo.currentData()
         cur, _suffix = self._currency()
-        # cache cen jest ważny per appid+waluta — inna gra/waluta = nowy cache
-        key = (appid, cur)
+        src = self.src_combo.currentData()
+        # cache jest ważny per appid+waluta+ŹRÓDŁO — oferty kupna i najniższe oferty
+        # sprzedaży to różne kwoty, zmieszanie ich wystawiłoby karty po złych cenach
+        key = (appid, cur, src)
         if key != self._cache_key:
             # z dysku, nie od zera: ceny sprzed doby oszczędzają zapytania, a to one
             # ściągają bana na IP (patrz core.load_prices)
-            self.price_cache = core.load_prices(cur)
+            self.price_cache = core.load_prices(cur, src)
             self._cache_key = key
             if self.price_cache:
                 self._log(f"Cache cen: {len(self.price_cache)} pozycji z ostatniej doby "
@@ -867,23 +926,42 @@ class MainWindow(QMainWindow):
             self.table.viewport().unsetCursor()
 
     # --------------------------------------------------------------- wycena ---
-    def _start_pricing(self):
-        appid, _, _ = self.app_combo.currentData()
+    def _start_pricing(self, source=None):
+        appid, ctx, _ = self.app_combo.currentData()
         cur, _ = self._currency()
+        source = source or self.src_combo.currentData()
         names = list(self.rows)
         todo = len([n for n in names if n not in self.price_cache])
         self.progress.setRange(0, max(todo, 1))
         self.progress.setValue(0)
-        if todo:
-            self.progress_label.setText(f"Wyceniam 0/{todo}…")
-        w = PriceWorker(self.session, appid, cur, names, self.price_cache,
-                        self.delay_spin.value())
+        if not todo:
+            self.progress_label.setText("Wszystkie ceny z cache.")
+
+        if source == 'buy':
+            if todo:
+                self.progress_label.setText(f"Wyceniam {todo} pozycji jednym zapytaniem…")
+            w = BulkPriceWorker(self.session, appid, ctx, names, self.price_cache)
+            w.done.connect(self._bulk_done)
+        else:
+            if todo:
+                self.progress_label.setText(f"Wyceniam 0/{todo}…")
+            w = PriceWorker(self.session, appid, cur, names, self.price_cache,
+                            self.delay_spin.value())
+            w.progress.connect(self._price_progress)
+            w.done.connect(self._pricing_done)
         w.priced.connect(self._price_ready)
-        w.progress.connect(self._price_progress)
         w.rate_limited.connect(self._rate_limited)
-        w.done.connect(self._pricing_done)
         self._price_worker = w
+        self._price_source = source
         self._track(w)
+
+    def _bulk_done(self, n):
+        if self.sender() is not self._price_worker:
+            return
+        self.progress.setValue(self.progress.maximum())
+        self.progress_label.setText(
+            f"Wycena zakończona — {n} pozycji jednym zapytaniem." if n else "Wycena zakończona.")
+        self._persist_prices()
 
     def _save_diag(self, diag):
         """Zapisuje raport o odmowie obok tokenu; zwraca ścieżkę albo '' gdy się nie udało."""
@@ -912,39 +990,59 @@ class MainWindow(QMainWindow):
             return                      # sygnał ze starego, anulowanego workera
         done = len(self.price_cache)    # ile zdążyło się wycenić przed odmową
         self._persist_prices()          # co ugrane, to ugrane — nie pytamy o to drugi raz
+        path = self._save_diag(diag)
+
+        if self._price_source == 'market':
+            # Ratunek zamiast każenia czekać: multisell wycenia całą listę JEDNYM
+            # zapytaniem, więc działa nawet gdy priceoverview jest zablokowane.
+            self._log("⚠ Steam odciął wycenę rynkową (429). Przechodzę na wycenę hurtem "
+                      "— jedno zapytanie na całą listę.", YELLOW)
+            self.src_combo.setCurrentIndex(self.src_combo.findData('buy'))
+            appid, _ctx, _ = self.app_combo.currentData()
+            cur, _ = self._currency()
+            self._cache_key = (appid, cur, 'buy')
+            self.price_cache = core.load_prices(cur, 'buy')
+            self._filling = True
+            for rec in self.rows.values():          # zeruj ceny rynkowe, by ich nie mieszać
+                rec['buyer'] = None
+                rec['price_it'].setText("…")
+                rec['price_it'].setData(Qt.UserRole, -2)
+                rec['price_it'].setForeground(QColor(TEXT_DIM))
+            self._filling = False
+            QMessageBox.information(
+                self, "Przełączono na wycenę hurtem",
+                "Steam zablokował wycenę rynkową (HTTP 429 — limit zapytań na Twój adres IP).\n\n"
+                "Przechodzę na wycenę hurtową: całą listę wycenia jedno zapytanie, więc "
+                "blokada jej nie dotyczy.\n\nRóżnica: to ceny najwyższych ofert kupna "
+                "(sprzedaż od ręki), zwykle nieco niższe niż najniższe oferty sprzedaży. "
+                "Kwoty w tabeli są aktualne — decyzję o wystawieniu podejmujesz po nich.")
+            self._start_pricing('buy')
+            return
+
+        # Tu docieramy tylko przy wycenie hurtem — rynkowa wyżej przełącza się na nią.
+        # Jedno zapytanie na całą listę i mimo to odmowa = ten adres IP ma nałożoną
+        # blokadę rynku Steam z wcześniejszych prób.
         self._filling = True
         for rec in self.rows.values():
             if rec['price_it'].data(Qt.UserRole) == -2:   # nadal „…" (niewycenione)
                 rec['buyer'] = None
-                rec['price_it'].setText("limit — poczekaj" if done else "odmowa")
+                rec['price_it'].setText("odmowa")
                 rec['price_it'].setData(Qt.UserRole, -3)
                 rec['price_it'].setForeground(QColor(YELLOW))
         self._filling = False
         self._recompute_receives()
 
-        if done:
-            self.progress_label.setText("Wstrzymano — limit zapytań Steam (429).")
-            msg = ("Steam przestał odpowiadać na pytania o ceny (HTTP 429) — przekroczony "
-                   f"limit rynku dla Twojego adresu IP. Wyceniono {done} pozycji; "
-                   "zapisałem je w cache, więc kolejny przebieg o nie nie zapyta.")
-            hint = ("\n\nBlokada trwa kilka godzin i KAŻDA kolejna próba liczy się od nowa, "
-                    "przedłużając ją.\n\nCo zrobić:\n"
-                    "• nie ponawiaj teraz — to jedyne, co realnie wydłuża karę,\n"
-                    "• wróć za kilka godzin: reszta pozycji dobierze się z cache,\n"
-                    "• zwiększ 'Odstęp' do 8–10 s przed kolejną próbą.")
-        else:
-            self.progress_label.setText("Steam odrzucił zapytania o ceny (429).")
-            msg = ("Steam odrzucił JUŻ PIERWSZE zapytanie o cenę (HTTP 429). To nie limit "
-                   "tempa — nie zdążyłeś wysłać nic, co dałoby się ograniczyć. Ten adres IP "
-                   "ma nałożoną blokadę rynku z wcześniejszych prób.")
-            hint = ("\n\nBlokada trwa ok. 6 godzin, ale liczy się od OSTATNIEJ próby, nie od "
-                    "ostatniego udanego użycia — dlatego kolejne uruchomienia potrafią "
-                    "utrzymywać ją w nieskończoność.\n\nCo zrobić:\n"
-                    "• zamknij aplikację i nie uruchamiaj jej przez ~6 godzin,\n"
-                    "• potem wróć i ustaw 'Odstęp' na 8–10 s,\n"
-                    "• ceny raz pobrane trzymają się doby w cache, więc następne "
-                    "uruchomienia pytają Steama znacznie rzadziej.")
-        path = self._save_diag(diag)
+        self.progress_label.setText("Steam odrzucił zapytania o ceny (429).")
+        msg = ("Steam odrzucił nawet wycenę hurtem — jedno zapytanie na całą listę, więc "
+               "nie ma mowy o przekroczeniu tempa. Ten adres IP ma nałożoną blokadę rynku "
+               f"z wcześniejszych prób{f'; z cache mam {done} pozycji' if done else ''}.")
+        hint = ("\n\nBlokada trwa ok. 6 godzin, ale liczy się od OSTATNIEJ próby, nie od "
+                "ostatniego udanego użycia — dlatego kolejne uruchomienia potrafią "
+                "utrzymywać ją w nieskończoność.\n\nCo zrobić:\n"
+                "• zamknij aplikację i nie uruchamiaj jej przez ~6 godzin,\n"
+                "• potem wróć — wycena hurtem to jedno zapytanie, więc ponowne wpadnięcie "
+                "w limit jest mało prawdopodobne,\n"
+                "• ceny trzymają się doby w cache, więc kolejne uruchomienia pytają rzadziej.")
         if path:
             hint += f"\n\nSzczegóły odpowiedzi Steama zapisałem do:\n{path}"
             self._log(f"Raport diagnostyczny: {path}", TEXT_DIM)
@@ -972,7 +1070,8 @@ class MainWindow(QMainWindow):
     def _persist_prices(self):
         """Zrzuca wycenione ceny na dysk — kolejny start nie zapyta o nie Steama."""
         if self.price_cache and self._cache_key:
-            core.save_prices(self.price_cache, self._cache_key[1])
+            _appid, cur, src = self._cache_key
+            core.save_prices(self.price_cache, cur, src)
 
     def _price_ready(self, name, cents):
         rec = self.rows.get(name)

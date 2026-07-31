@@ -97,6 +97,9 @@ def make_session(cookies):
     s = requests.Session()
     s.cookies.update({'steamLoginSecure': cookies['steamLoginSecure'],
                       'sessionid': cookies['sessionid']})
+    # ponytail: UA zostaje krótki. Zmierzone: priceoverview BEZ ciasteczek odrzuca
+    # (429) pełny UA przeglądarki, a przepuszcza „Mozilla/5.0"; z ciasteczkami
+    # przechodzą oba. Podszywanie się pod Chrome nic nie daje, a bywa gorsze.
     s.headers.update({'User-Agent': 'Mozilla/5.0',
                       'Referer': f"https://steamcommunity.com/profiles/{cookies['_steamid']}/inventory",
                       'X-Requested-With': 'XMLHttpRequest'})
@@ -229,9 +232,16 @@ def main():
             try:
                 price_cache[name] = fetch_price(s, appid, name, args.currency)
             except RateLimited:
-                sys.exit("Steam ogranicza zapytania o ceny (HTTP 429 — za dużo żądań "
-                         "z tego IP). Odczekaj kilkanaście–kilkadziesiąt minut i spróbuj "
-                         "ponownie (większy --delay pomaga).")
+                if price_cache:      # limit tempa — coś się zdążyło wycenić
+                    sys.exit(f"Steam ogranicza zapytania o ceny (HTTP 429 — za dużo żądań "
+                             f"z tego IP; wyceniono {len(price_cache)}). Odczekaj "
+                             f"kilkanaście–kilkadziesiąt minut i spróbuj ponownie "
+                             f"(większy --delay pomaga).")
+                sys.exit("Steam odrzucił już pierwsze zapytanie o cenę (HTTP 429) — to nie "
+                         "limit tempa, tylko blokada tego IP/klienta. Czekanie nie pomoże; "
+                         "sprawdź w przeglądarce https://steamcommunity.com/market/"
+                         "priceoverview/?appid=753&market_hash_name=1088850-Cosmo&currency=6 "
+                         "— jeśli tam też nie ma cen, blokowane jest łącze (spróbuj z innej sieci).")
             time.sleep(args.delay)  # ponytail: stały odstęp, priceoverview ~20 żądań/min
         buyer = price_cache[name] - args.undercut
         receive = buyer_price_to_receive(buyer)

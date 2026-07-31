@@ -881,32 +881,50 @@ class MainWindow(QMainWindow):
         self._track(w)
 
     def _rate_limited(self):
-        """Steam 429: oznacz niewycenione pozycje jako „limit", pokaż wyraźny komunikat."""
+        """Steam 429: oznacz niewycenione pozycje jako „limit", pokaż wyraźny komunikat.
+
+        429 na PIERWSZYM zapytaniu to nie limit tempa (nie zdążyłeś go przekroczyć),
+        tylko odmowa dla klienta/adresu IP — czekanie wtedy nic nie daje, więc
+        komunikat musi być inny niż przy realnym przekroczeniu ~20 zapytań/min.
+        """
         if self.sender() is not self._price_worker:
             return                      # sygnał ze starego, anulowanego workera
+        done = len(self.price_cache)    # ile zdążyło się wycenić przed odmową
         self._filling = True
         for rec in self.rows.values():
             if rec['price_it'].data(Qt.UserRole) == -2:   # nadal „…" (niewycenione)
                 rec['buyer'] = None
-                rec['price_it'].setText("limit — poczekaj")
+                rec['price_it'].setText("limit — poczekaj" if done else "odmowa")
                 rec['price_it'].setData(Qt.UserRole, -3)
                 rec['price_it'].setForeground(QColor(YELLOW))
         self._filling = False
         self._recompute_receives()
-        self.progress_label.setText("Wstrzymano — limit zapytań Steam (429).")
-        msg = ("Steam ogranicza zapytania o ceny: odpowiada HTTP 429 'za dużo żądań' "
-               "z Twojego adresu IP. To limit rynku (~20 zapytań/min), nie błąd konta "
-               "ani sesji.")
-        self._log("⚠ " + msg + " Wstrzymuję wycenę, żeby nie przedłużać blokady — "
-                  "odczekaj kilkanaście–kilkadziesiąt minut i wczytaj ekwipunek ponownie "
-                  "(większy odstęp zmniejsza ryzyko).", YELLOW)
-        QMessageBox.warning(
-            self, "Limit zapytań Steam",
-            msg + "\n\nWycena została wstrzymana — każde kolejne zapytanie w trakcie "
-            "blokady tylko ją przedłuża.\n\nCo zrobić:\n"
-            "• odczekaj kilkanaście–kilkadziesiąt minut,\n"
-            "• nie przeładowuj ekwipunku wielokrotnie,\n"
-            "• zwiększ 'Odstęp' (np. do 5–6 s) przed kolejną próbą.")
+
+        if done:
+            self.progress_label.setText("Wstrzymano — limit zapytań Steam (429).")
+            msg = ("Steam ogranicza zapytania o ceny: odpowiada HTTP 429 'za dużo żądań' "
+                   f"z Twojego adresu IP. Wyceniono {done} pozycji przed blokadą. "
+                   "To limit rynku (~20 zapytań/min), nie błąd konta ani sesji.")
+            hint = ("\n\nWycena została wstrzymana — każde kolejne zapytanie w trakcie "
+                    "blokady tylko ją przedłuża.\n\nCo zrobić:\n"
+                    "• odczekaj kilkanaście–kilkadziesiąt minut,\n"
+                    "• nie przeładowuj ekwipunku wielokrotnie,\n"
+                    "• zwiększ 'Odstęp' (np. do 5–6 s) przed kolejną próbą.")
+        else:
+            self.progress_label.setText("Steam odrzucił zapytania o ceny (429).")
+            msg = ("Steam odrzucił JUŻ PIERWSZE zapytanie o cenę (HTTP 429). To nie jest "
+                   "limit tempa — nie zdążyłeś wysłać nic, co dałoby się ograniczyć. "
+                   "Rynek Steam blokuje ten adres IP albo tego klienta, i czekanie "
+                   "samo z siebie tego nie odblokuje.")
+            hint = ("\n\nJak sprawdzić, co blokuje — wklej ten adres do przeglądarki "
+                    "na tym samym komputerze:\n"
+                    "https://steamcommunity.com/market/priceoverview/?appid=753"
+                    "&market_hash_name=1088850-Cosmo&currency=6\n\n"
+                    "• widzisz ceny (JSON) → blokowany jest klient, nie Twoje łącze;\n"
+                    "• widzisz 'null' lub błąd → blokowany jest adres IP: spróbuj z innej "
+                    "sieci (np. hotspot z telefonu) albo zrestartuj router, żeby dostać nowy IP.")
+        self._log("⚠ " + msg, YELLOW)
+        QMessageBox.warning(self, "Steam odrzuca zapytania o ceny", msg + hint)
 
     def _cancel_worker(self, cls):
         for w in list(self._workers):

@@ -727,8 +727,13 @@ class MainWindow(QMainWindow):
         # cache cen jest ważny per appid+waluta — inna gra/waluta = nowy cache
         key = (appid, cur)
         if key != self._cache_key:
-            self.price_cache = {}
+            # z dysku, nie od zera: ceny sprzed doby oszczędzają zapytania, a to one
+            # ściągają bana na IP (patrz core.load_prices)
+            self.price_cache = core.load_prices(cur)
             self._cache_key = key
+            if self.price_cache:
+                self._log(f"Cache cen: {len(self.price_cache)} pozycji z ostatniej doby "
+                          f"(bez pytania Steama).", TEXT_DIM)
         self._loaded_appid = appid       # link „otwórz na rynku" używa appid z tego wczytania
         self.btn_load.setEnabled(False)
         self.btn_dry.setEnabled(False)
@@ -906,6 +911,7 @@ class MainWindow(QMainWindow):
         if self.sender() is not self._price_worker:
             return                      # sygnał ze starego, anulowanego workera
         done = len(self.price_cache)    # ile zdążyło się wycenić przed odmową
+        self._persist_prices()          # co ugrane, to ugrane — nie pytamy o to drugi raz
         self._filling = True
         for rec in self.rows.values():
             if rec['price_it'].data(Qt.UserRole) == -2:   # nadal „…" (niewycenione)
@@ -918,27 +924,26 @@ class MainWindow(QMainWindow):
 
         if done:
             self.progress_label.setText("Wstrzymano — limit zapytań Steam (429).")
-            msg = ("Steam ogranicza zapytania o ceny: odpowiada HTTP 429 'za dużo żądań' "
-                   f"z Twojego adresu IP. Wyceniono {done} pozycji przed blokadą. "
-                   "To limit rynku (~20 zapytań/min), nie błąd konta ani sesji.")
-            hint = ("\n\nWycena została wstrzymana — każde kolejne zapytanie w trakcie "
-                    "blokady tylko ją przedłuża.\n\nCo zrobić:\n"
-                    "• odczekaj kilkanaście–kilkadziesiąt minut,\n"
-                    "• nie przeładowuj ekwipunku wielokrotnie,\n"
-                    "• zwiększ 'Odstęp' (np. do 5–6 s) przed kolejną próbą.")
+            msg = ("Steam przestał odpowiadać na pytania o ceny (HTTP 429) — przekroczony "
+                   f"limit rynku dla Twojego adresu IP. Wyceniono {done} pozycji; "
+                   "zapisałem je w cache, więc kolejny przebieg o nie nie zapyta.")
+            hint = ("\n\nBlokada trwa kilka godzin i KAŻDA kolejna próba liczy się od nowa, "
+                    "przedłużając ją.\n\nCo zrobić:\n"
+                    "• nie ponawiaj teraz — to jedyne, co realnie wydłuża karę,\n"
+                    "• wróć za kilka godzin: reszta pozycji dobierze się z cache,\n"
+                    "• zwiększ 'Odstęp' do 8–10 s przed kolejną próbą.")
         else:
             self.progress_label.setText("Steam odrzucił zapytania o ceny (429).")
-            msg = ("Steam odrzucił JUŻ PIERWSZE zapytanie o cenę (HTTP 429). To nie jest "
-                   "limit tempa — nie zdążyłeś wysłać nic, co dałoby się ograniczyć. "
-                   "Rynek Steam blokuje ten adres IP albo tego klienta, i czekanie "
-                   "samo z siebie tego nie odblokuje.")
-            hint = ("\n\nJak sprawdzić, co blokuje — wklej ten adres do przeglądarki "
-                    "na tym samym komputerze:\n"
-                    "https://steamcommunity.com/market/priceoverview/?appid=753"
-                    "&market_hash_name=1088850-Cosmo&currency=6\n\n"
-                    "• widzisz ceny (JSON) → blokowany jest klient, nie Twoje łącze;\n"
-                    "• widzisz 'null' lub błąd → blokowany jest adres IP: spróbuj z innej "
-                    "sieci (np. hotspot z telefonu) albo zrestartuj router, żeby dostać nowy IP.")
+            msg = ("Steam odrzucił JUŻ PIERWSZE zapytanie o cenę (HTTP 429). To nie limit "
+                   "tempa — nie zdążyłeś wysłać nic, co dałoby się ograniczyć. Ten adres IP "
+                   "ma nałożoną blokadę rynku z wcześniejszych prób.")
+            hint = ("\n\nBlokada trwa ok. 6 godzin, ale liczy się od OSTATNIEJ próby, nie od "
+                    "ostatniego udanego użycia — dlatego kolejne uruchomienia potrafią "
+                    "utrzymywać ją w nieskończoność.\n\nCo zrobić:\n"
+                    "• zamknij aplikację i nie uruchamiaj jej przez ~6 godzin,\n"
+                    "• potem wróć i ustaw 'Odstęp' na 8–10 s,\n"
+                    "• ceny raz pobrane trzymają się doby w cache, więc następne "
+                    "uruchomienia pytają Steama znacznie rzadziej.")
         path = self._save_diag(diag)
         if path:
             hint += f"\n\nSzczegóły odpowiedzi Steama zapisałem do:\n{path}"
@@ -962,6 +967,12 @@ class MainWindow(QMainWindow):
     def _pricing_done(self):
         if self.sender() is self._price_worker:
             self.progress_label.setText("Wycena zakończona.")
+            self._persist_prices()
+
+    def _persist_prices(self):
+        """Zrzuca wycenione ceny na dysk — kolejny start nie zapyta o nie Steama."""
+        if self.price_cache and self._cache_key:
+            core.save_prices(self.price_cache, self._cache_key[1])
 
     def _price_ready(self, name, cents):
         rec = self.rows.get(name)

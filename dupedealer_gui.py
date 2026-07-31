@@ -195,7 +195,7 @@ class PriceWorker(QThread):
     więc stały odstęp `delay` między żądaniami i cache po nazwie."""
     priced = Signal(str, int)       # name, buyer_cents (-1 = błąd, -3 = limit Steama)
     progress = Signal(int, int)
-    rate_limited = Signal()         # Steam 429 — wycena przerwana, nie pukamy dalej
+    rate_limited = Signal(str)      # Steam 429 (+raport diag) — wycena przerwana
     done = Signal()
 
     def __init__(self, session, appid, currency, names, cache, delay, parent=None):
@@ -224,9 +224,9 @@ class PriceWorker(QThread):
                 cents = core.fetch_price(self.s, self.appid, name, self.currency)
                 self.cache[name] = cents
                 self.priced.emit(name, cents)
-            except core.RateLimited:
-                self.priced.emit(name, -3)   # ta pozycja: limit Steama
-                self.rate_limited.emit()     # przerwij — dalsze pukanie przedłuża blokadę
+            except core.RateLimited as e:
+                self.priced.emit(name, -3)          # ta pozycja: limit Steama
+                self.rate_limited.emit(e.diag or "")  # przerwij — pukanie przedłuża blokadę
                 return
             except Exception:
                 self.priced.emit(name, -1)   # inny błąd — nie cache'ujemy
@@ -880,7 +880,23 @@ class MainWindow(QMainWindow):
         self._price_worker = w
         self._track(w)
 
-    def _rate_limited(self):
+    def _save_diag(self, diag):
+        """Zapisuje raport o odmowie obok tokenu; zwraca ścieżkę albo '' gdy się nie udało."""
+        if not diag:
+            return ''
+        base = os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'),
+                            'DupeDealer') if os.name == 'nt' else os.path.expanduser('~')
+        path = os.path.join(base, 'dupedealer-diag.txt')
+        try:
+            os.makedirs(base, exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(f"DupeDealer — odmowa wyceny, {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+                f.write(diag + "\n")
+            return path
+        except OSError:
+            return ''
+
+    def _rate_limited(self, diag=""):
         """Steam 429: oznacz niewycenione pozycje jako „limit", pokaż wyraźny komunikat.
 
         429 na PIERWSZYM zapytaniu to nie limit tempa (nie zdążyłeś go przekroczyć),
@@ -923,6 +939,10 @@ class MainWindow(QMainWindow):
                     "• widzisz ceny (JSON) → blokowany jest klient, nie Twoje łącze;\n"
                     "• widzisz 'null' lub błąd → blokowany jest adres IP: spróbuj z innej "
                     "sieci (np. hotspot z telefonu) albo zrestartuj router, żeby dostać nowy IP.")
+        path = self._save_diag(diag)
+        if path:
+            hint += f"\n\nSzczegóły odpowiedzi Steama zapisałem do:\n{path}"
+            self._log(f"Raport diagnostyczny: {path}", TEXT_DIM)
         self._log("⚠ " + msg, YELLOW)
         QMessageBox.warning(self, "Steam odrzuca zapytania o ceny", msg + hint)
 

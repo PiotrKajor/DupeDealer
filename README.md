@@ -55,6 +55,8 @@ bot nigdy nie robi tego za Ciebie.
 - 💰 **Wycena rynkowa** (`priceoverview`, najniższa oferta sprzedaży) do wyboru — dokładniejsza,
   ale jedno zapytanie na pozycję. Obie z odjęciem prowizji Steam (~15%) i opcją *undercut*.
 - 💾 **Ceny zapamiętywane na dobę** — kolejne uruchomienia prawie nie pytają Steama.
+- 🧹 **Usuń moje dane** — jeden przycisk kasuje z komputera wszystko, co program zapisał
+  (logowanie, cache cen, raport diagnostyczny).
 - 🧪 **Ten sam silnik w CLI** — dobry do crona; wbudowany `--selftest`.
 
 ---
@@ -161,6 +163,21 @@ więcej niż cena odniesienia. Z opcją *undercut* schodzisz jeszcze o kilka gro
 
 Ceny lądują w `prices.json` obok tokenu i są ważne **dobę**, osobno dla każdego źródła
 i waluty (oferty kupna i oferty sprzedaży to różne kwoty — nie wolno ich mieszać).
+
+## Gdzie program trzyma dane
+
+Wszystko ląduje w jednym katalogu — `%APPDATA%\DupeDealer` (Windows) albo `~/.dupedealer`:
+
+| Plik | Co to |
+|------|-------|
+| `refresh_token` | zapamiętane logowanie do Steama |
+| `prices.json` | cache cen (ważny dobę) |
+| `dupedealer-diag.txt` | raport z ostatniej odmowy wyceny, jeśli wystąpiła |
+
+Przycisk **Usuń moje dane** w nagłówku kasuje te pliki i sam katalog, po potwierdzeniu.
+Program nie zostawia nic poza tym katalogiem — nie pisze do rejestru ani nie instaluje się
+w systemie, więc po wyczyszczeniu danych wystarczy skasować `.exe`. Twoje przedmioty
+i wystawione oferty na Steamie pozostają oczywiście nietknięte.
 
 ## Bezpieczeństwo
 

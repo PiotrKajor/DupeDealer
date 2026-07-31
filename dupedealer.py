@@ -142,12 +142,48 @@ def pick_duplicates(items):
 
 
 class RateLimited(Exception):
-    """Steam odrzucił zapytanie o cenę (HTTP 429 — za dużo żądań z tego IP).
+    """Steam odrzucił zapytanie o cenę (HTTP 429).
 
-    priceoverview ma limit ~20 żądań/min na IP. Po jego przekroczeniu KAŻDE kolejne
-    zapytanie w oknie blokady dostaje 429 (i przedłuża blokadę) — wołający powinien
-    wyhamować, a nie pukać dalej.
+    Dwa różne zdarzenia pod jednym kodem:
+    - przekroczony limit tempa (~20 żądań/min na IP) — wołający ma wyhamować,
+      bo każde kolejne pukanie przedłuża blokadę;
+    - odmowa dla klienta/adresu już przy PIERWSZYM żądaniu — wtedy czekanie nic
+      nie da i trzeba obejrzeć `diag` (nagłówki odpowiedzi wskazują, kto odciął:
+      Steam czy warstwa pośrednia).
+
+    `diag` = surowe dane odpowiedzi do raportu, `None` gdy nie zebrano.
     """
+
+    def __init__(self, diag=None):
+        super().__init__("Steam odrzucił zapytanie o cenę (HTTP 429)")
+        self.diag = diag
+
+
+def diag_report(resp, session=None):
+    """Tekstowy raport o odrzuconym żądaniu — do wklejenia przy zgłaszaniu błędu.
+
+    Zbiera to, czego nie widać z zewnątrz: nagłówki odpowiedzi (zdradzają, czy odciął
+    Steam, czy CDN/proxy po drodze), wersje bibliotek i OpenSSL (odcisk TLS zależy od
+    nich, a Steam potrafi po nim filtrować) oraz proxy widziane przez requests.
+    """
+    import platform, ssl
+    lines = [
+        f"URL:        {resp.url}",
+        f"Status:     {resp.status_code}",
+        f"Treść:      {resp.text[:200]!r}",
+        f"Nagłówki odpowiedzi:",
+    ]
+    lines += [f"  {k}: {v}" for k, v in resp.headers.items()]
+    lines += [
+        f"Nagłówki żądania:",
+        *[f"  {k}: {v}" for k, v in resp.request.headers.items() if k.lower() != 'cookie'],
+        f"Ciasteczka wysłane: {'tak' if resp.request.headers.get('Cookie') else 'NIE'}",
+        f"Python:     {platform.python_version()} / {platform.platform()}",
+        f"OpenSSL:    {ssl.OPENSSL_VERSION}",
+        f"requests:   {requests.__version__}",
+        f"proxy:      {getattr(session, 'proxies', None)} | env: {requests.utils.getproxies()}",
+    ]
+    return "\n".join(lines)
 
 
 def fetch_price(s, appid, name, currency):
@@ -160,7 +196,7 @@ def fetch_price(s, appid, name, currency):
                  params={'appid': appid, 'market_hash_name': name, 'currency': currency},
                  timeout=30)
     if resp.status_code == 429:
-        raise RateLimited()
+        raise RateLimited(diag_report(resp, s))
     r = resp.json()
     if not isinstance(r, dict):          # 429/awaria zwraca `null` -> brak danych
         return 0
@@ -231,7 +267,9 @@ def main():
         if name not in price_cache:
             try:
                 price_cache[name] = fetch_price(s, appid, name, args.currency)
-            except RateLimited:
+            except RateLimited as e:
+                if e.diag and not price_cache:   # odmowa od pierwszego żądania — pokaż szczegóły
+                    print("--- odpowiedź Steama ---", e.diag, "---", sep="\n", file=sys.stderr)
                 if price_cache:      # limit tempa — coś się zdążyło wycenić
                     sys.exit(f"Steam ogranicza zapytania o ceny (HTTP 429 — za dużo żądań "
                              f"z tego IP; wyceniono {len(price_cache)}). Odczekaj "

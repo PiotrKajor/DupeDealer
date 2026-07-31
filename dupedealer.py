@@ -106,6 +106,55 @@ def make_session(cookies):
     return s
 
 
+PRICE_TTL = 24 * 3600      # ceny kart pełzają groszami — doba w zupełności wystarcza
+
+
+def price_cache_path():
+    """Plik cache cen: obok tokenu (%APPDATA%\\DupeDealer na Windowsie)."""
+    base = (os.path.join(os.environ.get('APPDATA') or os.path.expanduser('~'), 'DupeDealer')
+            if os.name == 'nt' else os.path.expanduser('~/.dupedealer'))
+    return os.path.join(base, 'prices.json')
+
+
+def load_prices(currency, path=None):
+    """Wczytuje niewygasłe ceny {nazwa: grosze} dla danej waluty.
+
+    Cache TYLKO w pamięci procesu oznaczał, że każde uruchomienie odpytywało Steam od
+    nowa o te same karty — a `priceoverview` po przekroczeniu limitu banuje IP na
+    godziny. Trzymanie cen na dysku usuwa większość zapytań, nie tylko je spowalnia.
+    """
+    try:
+        with open(path or price_cache_path(), encoding='utf-8') as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    now = time.time()
+    return {name: rec['cents'] for name, rec in data.get(str(currency), {}).items()
+            if isinstance(rec, dict) and now - rec.get('ts', 0) < PRICE_TTL}
+
+
+def save_prices(cache, currency, path=None):
+    """Dopisuje ceny do cache na dysku (inne waluty zostawia nietknięte)."""
+    path = path or price_cache_path()
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    now = time.time()
+    data.setdefault(str(currency), {}).update(
+        {name: {'cents': cents, 'ts': now} for name, cents in cache.items()})
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+        return path
+    except OSError:
+        return ''
+
+
 def fetch_inventory(s, steamid, appid, contextid):
     """Pobiera ekwipunek (JSON). count max 2000 dla tego endpointu (5000 -> HTTP 400)."""
     return s.get(f"https://steamcommunity.com/inventory/{steamid}/{appid}/{contextid}",
@@ -221,6 +270,21 @@ def selftest():
     counts, to_sell = pick_duplicates(items)
     assert counts == Counter({'A': 3, 'B': 1})
     assert [c['assetid'] for c in to_sell] == ['1', '2'], to_sell  # zostaje 1×A i 1×B
+
+    # cache cen: to on decyduje, ile razy pytamy Steama — a nadmiar pytań = ban IP
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, 'prices.json')
+        save_prices({'A': 24, 'B': 40}, '6', p)
+        assert load_prices('6', p) == {'A': 24, 'B': 40}
+        save_prices({'C': 15}, '6', p)
+        assert load_prices('6', p) == {'A': 24, 'B': 40, 'C': 15}   # dopisuje, nie nadpisuje
+        assert load_prices('1', p) == {}                            # inna waluta = inny zestaw
+        stale = json.load(open(p, encoding='utf-8'))
+        stale['6']['A']['ts'] -= PRICE_TTL + 60                     # postarz jeden wpis
+        json.dump(stale, open(p, 'w', encoding='utf-8'))
+        assert load_prices('6', p) == {'B': 40, 'C': 15}, "wygasłe ceny mają odpaść"
+        assert load_prices('6', os.path.join(d, 'nie-ma.json')) == {}
     print("selftest OK")
 
 
@@ -261,25 +325,29 @@ def main():
 
     print(f"Przedmiotów: {len(cards)}, rodzajów: {len(counts)}, duplikatów do sprzedania: {len(to_sell)}")
 
-    price_cache = {}
+    cached = load_prices(args.currency)          # ceny z ostatniej doby — bez pytania Steama
+    price_cache = dict(cached)
+    if cached:
+        print(f"Cache cen: {len(cached)} pozycji z ostatniej doby.")
     for c in to_sell:
         name = c['name']
         if name not in price_cache:
             try:
                 price_cache[name] = fetch_price(s, appid, name, args.currency)
             except RateLimited as e:
-                if e.diag and not price_cache:   # odmowa od pierwszego żądania — pokaż szczegóły
-                    print("--- odpowiedź Steama ---", e.diag, "---", sep="\n", file=sys.stderr)
-                if price_cache:      # limit tempa — coś się zdążyło wycenić
+                fresh = {k: v for k, v in price_cache.items() if k not in cached}
+                if fresh:
+                    save_prices(fresh, args.currency)   # co ugrane, to ugrane
                     sys.exit(f"Steam ogranicza zapytania o ceny (HTTP 429 — za dużo żądań "
-                             f"z tego IP; wyceniono {len(price_cache)}). Odczekaj "
-                             f"kilkanaście–kilkadziesiąt minut i spróbuj ponownie "
-                             f"(większy --delay pomaga).")
-                sys.exit("Steam odrzucił już pierwsze zapytanie o cenę (HTTP 429) — to nie "
-                         "limit tempa, tylko blokada tego IP/klienta. Czekanie nie pomoże; "
-                         "sprawdź w przeglądarce https://steamcommunity.com/market/"
-                         "priceoverview/?appid=753&market_hash_name=1088850-Cosmo&currency=6 "
-                         "— jeśli tam też nie ma cen, blokowane jest łącze (spróbuj z innej sieci).")
+                             f"z tego IP; wyceniono {len(fresh)}, zapisane w cache). "
+                             f"Odczekaj i spróbuj ponownie — kolejny przebieg zapyta "
+                             f"tylko o resztę (większy --delay pomaga).")
+                if e.diag:               # odmowa od pierwszego żądania — pokaż szczegóły
+                    print("--- odpowiedź Steama ---", e.diag, "---", sep="\n", file=sys.stderr)
+                sys.exit("Steam odrzucił już pierwsze zapytanie o cenę (HTTP 429). Ten adres IP "
+                         "ma nałożoną blokadę rynku — trwa ona kilka godzin i KAŻDA kolejna "
+                         "próba ją przedłuża. Nie ponawiaj: odczekaj ~6 godzin bez ani jednego "
+                         "uruchomienia, potem zacznij od --delay 10.")
             time.sleep(args.delay)  # ponytail: stały odstęp, priceoverview ~20 żądań/min
         buyer = price_cache[name] - args.undercut
         receive = buyer_price_to_receive(buyer)
@@ -294,6 +362,10 @@ def main():
         ok = resp.get('success')
         print(line + (" ✓ wystawione (potwierdź w apce)" if ok else f" ✗ {resp.get('message', resp)}"))
         time.sleep(args.delay)
+
+    fresh = {k: v for k, v in price_cache.items() if k not in cached}
+    if fresh:
+        save_prices(fresh, args.currency)
 
     if not args.sell:
         print("\nDRY-RUN. Dodaj --sell aby naprawdę wystawić.")

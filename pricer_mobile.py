@@ -13,8 +13,10 @@ Cechy:
 
 Uruchomienie na iPhonie (a-Shell z App Store, darmowa):
     curl -O https://raw.githubusercontent.com/PiotrKajor/DupeDealer/master/pricer_mobile.py
-    python3 pricer_mobile.py --steamid 7656119XXXXXXXXXX --app 440/2 --currency 6
+    python3 pricer_mobile.py --steamid https://steamcommunity.com/id/TWOJA_NAZWA/ --app 440/2
 
+`--steamid` przyjmuje SteamID64 (17 cyfr), link do profilu (.../id/… lub
+.../profiles/…) albo samą nazwę vanity — skrypt sam wyciągnie SteamID64.
 Albo ustaw wartości w bloku KONFIGURACJA niżej (pico pricer_mobile.py) i odpal
 bez flag: python3 pricer_mobile.py
 """
@@ -25,7 +27,7 @@ import sys
 import time
 from collections import Counter
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 # ----------------------------------------------------------- KONFIGURACJA ---
@@ -86,6 +88,28 @@ def _get(url, params=None):
         return e.code, e.read().decode("utf-8", "replace")
 
 
+def resolve_steamid(value):
+    """Zamienia to, co poda user, na SteamID64. Akceptuje:
+    - gotowy SteamID64 (17 cyfr),
+    - link .../profiles/<id>/,
+    - link .../id/<vanity>/ albo samą nazwę vanity (rozwiązuje przez ?xml=1).
+    """
+    value = value.strip().rstrip('/')
+    m = re.search(r'/profiles/(\d{17})', value)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r'\d{17}', value):
+        return value
+    m = re.search(r'/id/([^/?]+)', value)
+    vanity = m.group(1) if m else value
+    _, body = _get(f"https://steamcommunity.com/id/{quote(vanity)}/", {"xml": "1"})
+    m = re.search(r'<steamID64>(\d+)</steamID64>', body)
+    if not m:
+        sys.exit(f"Nie udało się rozwiązać profilu '{vanity}' na SteamID64 "
+                 "(sprawdź nazwę/link albo czy profil jest publiczny).")
+    return m.group(1)
+
+
 def fetch_inventory(steamid, appid, contextid):
     """Publiczny ekwipunek (JSON). Zwraca dict albo None (prywatny/niedostępny)."""
     _, body = _get(f"https://steamcommunity.com/inventory/{steamid}/{appid}/{contextid}",
@@ -134,12 +158,16 @@ def selftest():
                             {"classid": "2", "instanceid": "0", "marketable": 1,
                              "type": "Trading Card", "market_hash_name": "B"}]}
     assert duplicate_names(inv, "Trading Card") == [("A", 2, 3)], duplicate_names(inv, "Trading Card")
+    # resolve_steamid: ścieżki bez sieci (17 cyfr i link /profiles/)
+    assert resolve_steamid("76561199087363689") == "76561199087363689"
+    assert resolve_steamid("https://steamcommunity.com/profiles/76561199087363689/") == "76561199087363689"
     print("selftest OK")
 
 
 def main():
     ap = argparse.ArgumentParser(description="Mobilny wycennik DupeDealer (a-Shell).")
-    ap.add_argument("--steamid", default=STEAMID)
+    ap.add_argument("--steamid", default=STEAMID,
+                    help="SteamID64, link do profilu (.../id/… lub .../profiles/…) albo nazwa vanity")
     ap.add_argument("--app", default=APP)
     ap.add_argument("--types", default=TYPES)
     ap.add_argument("--currency", default=CURRENCY)
@@ -155,9 +183,14 @@ def main():
 
     # 1) skąd bierzemy listę nazw: publiczny ekwipunek albo ręczna lista ITEMS
     if args.steamid:
-        print(f"Pobieram publiczny ekwipunek {args.steamid} ({args.app})…")
         try:
-            inv = fetch_inventory(args.steamid, appid, contextid)
+            steamid64 = resolve_steamid(args.steamid)
+        except RateLimited:
+            sys.exit("429 przy rozwiązywaniu profilu — włącz dane komórkowe / inną sieć.")
+        print(f"Profil → SteamID64: {steamid64}")
+        print(f"Pobieram publiczny ekwipunek ({args.app})…")
+        try:
+            inv = fetch_inventory(steamid64, appid, contextid)
         except RateLimited:
             sys.exit("429 na ekwipunku — to IP też jest przymulone. Włącz dane "
                      "komórkowe / inną sieć i spróbuj ponownie.")
@@ -168,8 +201,8 @@ def main():
     else:
         rows = [(n, 1, "?") for n in ITEMS]
         if not rows:
-            sys.exit("Podaj --steamid 7656119XXXXXXXXXX (publiczny ekwipunek) albo "
-                     "wpisz nazwy w liście ITEMS w skrypcie.")
+            sys.exit("Podaj --steamid (SteamID64, link do profilu albo nazwa vanity — "
+                     "publiczny ekwipunek) albo wpisz nazwy w liście ITEMS w skrypcie.")
 
     if not rows:
         print("Brak duplikatów do wyceny.")

@@ -17,6 +17,11 @@ Uruchomienie na iPhonie (a-Shell z App Store, darmowa):
 
 `--steamid` przyjmuje SteamID64 (17 cyfr), link do profilu (.../id/… lub
 .../profiles/…) albo samą nazwę vanity — skrypt sam wyciągnie SteamID64.
+
+Gdy endpoint EKWIPUNKU blokuje (429 — jest najostrzej limitowany), podaj nazwy
+wprost, a skrypt w ogóle nie ruszy ekwipunku, tylko wyceni:
+    python3 pricer_mobile.py "Name Tag" "Tour of Duty Ticket" --app 440/2
+
 Albo ustaw wartości w bloku KONFIGURACJA niżej (pico pricer_mobile.py) i odpal
 bez flag: python3 pricer_mobile.py
 """
@@ -173,6 +178,9 @@ def main():
     ap.add_argument("--currency", default=CURRENCY)
     ap.add_argument("--undercut", type=int, default=UNDERCUT)
     ap.add_argument("--delay", type=float, default=DELAY)
+    ap.add_argument("names", nargs="*",
+                    help="nazwy przedmiotów do wyceny WPROST (pomija ekwipunek); "
+                         'np. "Name Tag" "Tour of Duty Ticket"')
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     if args.selftest:
@@ -181,8 +189,12 @@ def main():
     appid, contextid = args.app.split("/")
     suffix = CUR_SUFFIX.get(args.currency, "")
 
-    # 1) skąd bierzemy listę nazw: publiczny ekwipunek albo ręczna lista ITEMS
-    if args.steamid:
+    # 1) skąd bierzemy listę nazw:
+    #    a) nazwy podane wprost w linii poleceń — NIE rusza ekwipunku (najbezpieczniej),
+    #    b) publiczny ekwipunek z --steamid, c) lista ITEMS w skrypcie.
+    if args.names:
+        rows = [(n, 1, "?") for n in args.names]
+    elif args.steamid:
         try:
             steamid64 = resolve_steamid(args.steamid)
         except RateLimited:

@@ -1,0 +1,10 @@
+{
+  "name": "DupeDealer — zdalny wycennik",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "python3 pricer_mobile.py --selftest; echo '--- Gotowe. Wyceniaj z IP tego Codespace, np.: python3 pricer_mobile.py --steamid <link_do_profilu_lub_SteamID64> --app 440/2 --currency 6 ---'",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  }
+}

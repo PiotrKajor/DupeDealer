@@ -57,6 +57,8 @@ bot nigdy nie robi tego za Ciebie.
 - 💾 **Ceny zapamiętywane na dobę** — kolejne uruchomienia prawie nie pytają Steama.
 - 🧹 **Usuń moje dane** — jeden przycisk kasuje z komputera wszystko, co program zapisał
   (logowanie, cache cen, raport diagnostyczny).
+- 🦊 **Wersja przeglądarkowa (userscript)** — wystawianie duplikatów wprost z Firefoksa/Chrome,
+  w zalogowanej sesji, bez instalowania apki (`steam_autosell.user.js`).
 - 🧪 **Ten sam silnik w CLI** — dobry do crona; wbudowany `--selftest`.
 
 ---
@@ -105,6 +107,36 @@ Wersje release'owe buduje GitHub Actions (`.github/workflows/release.yml`) po pu
 > dynamicznie — bez tego w gotowym `.exe` zabraknie `steammessages_auth_pb2` i logowanie
 > się wysypie. Zostaw też pin **`protobuf==3.20.3`** (nowszy nie ma `google.protobuf.service`,
 > którego wymagają wygenerowane `*_pb2`).
+
+---
+
+## Wystawianie z przeglądarki (userscript)
+
+Nie chcesz stawiać apki? Ten sam efekt masz z poziomu przeglądarki. Skrypt
+[`steam_autosell.user.js`](../../raw/master/steam_autosell.user.js) działa w Twojej
+**zalogowanej sesji Steam** (Firefox/Chrome z **Tampermonkey** albo **Violentmonkey**):
+wycenia duplikaty **hurtem** (jedno żądanie `multisell`) i wystawia je przez sesję
+przeglądarki — bez logowania w apce i bez pobierania cen po jednej pozycji (to właśnie
+ściąga limit 429).
+
+**Instalacja:** zainstaluj Tampermonkey/Violentmonkey, potem otwórz
+[`steam_autosell.user.js`](../../raw/master/steam_autosell.user.js) — menedżer sam
+zaproponuje instalację.
+
+**Użycie:** wejdź na swoją stronę ekwipunku (`steamcommunity.com/id/<ty>/inventory/`)
+— w prawym dolnym rogu pojawi się panel:
+
+1. **Podgląd (dry-run)** — pokazuje, co i za ile *by* wystawił; nic nie wystawia.
+2. **Wystaw duplikaty** — wystawia oferty (czekające na potwierdzenie), z odstępem między nimi.
+3. Apka Steam Mobile → **Potwierdzenia → Zatwierdź wszystko** (skrypt **nie** potwierdza).
+
+Ustawienia na górze pliku: `APP` (`753/6`=karty, `440/2`=TF2, `730/2`=CS2, `570/2`=Dota2),
+`TYPES`, `UNDERCUT`, `DELAY_MS`.
+
+> Przydatne, gdy przymulone IP blokuje pobieranie cen w wersji desktopowej — przeglądarka
+> robi to łagodnie, w sesji, więc przechodzi. Samą **wycenę** (bez logowania) odpalisz też
+> z innego IP przez `pricer_mobile.py` (a-Shell na iPhonie lub GitHub Codespaces — jest gotowy
+> `.devcontainer`).
 
 ---
 

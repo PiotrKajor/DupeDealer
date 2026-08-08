@@ -119,9 +119,13 @@ wycenia duplikaty **hurtem** (jedno żądanie `multisell`) i wystawia je przez s
 przeglądarki — bez logowania w apce i bez pobierania cen po jednej pozycji (to właśnie
 ściąga limit 429).
 
-**Instalacja:** zainstaluj Tampermonkey/Violentmonkey, potem otwórz
-[`steam_autosell.user.js`](../../raw/master/steam_autosell.user.js) — menedżer sam
-zaproponuje instalację.
+**Instalacja:**
+
+1. Zainstaluj menedżer userscriptów **Violentmonkey** z oficjalnej strony
+   [violentmonkey.github.io](https://violentmonkey.github.io/) — kliknij przycisk swojej
+   przeglądarki (Firefox/Chrome/Edge) → w sklepie **„Dodaj do…"**.
+2. Otwórz [`steam_autosell.user.js`](../../raw/master/steam_autosell.user.js) — Violentmonkey
+   pokaże stronę instalacji, kliknij **„Zainstaluj"**.
 
 **Użycie:** wejdź na swoją stronę ekwipunku (`steamcommunity.com/id/<ty>/inventory/`)
 — w prawym dolnym rogu pojawi się panel:

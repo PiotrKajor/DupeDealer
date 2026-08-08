@@ -119,6 +119,11 @@ wycenia duplikaty **hurtem** (jedno żądanie `multisell`) i wystawia je przez s
 przeglądarki — bez logowania w apce i bez pobierania cen po jednej pozycji (to właśnie
 ściąga limit 429).
 
+**Gdzie działa:** dowolna przeglądarka **desktopowa** z Violentmonkey/Tampermonkey —
+Firefox (+ Waterfox/LibreWolf/Floorp), Chrome, Edge, Brave, Vivaldi, Opera/GX; na
+Androidzie **Firefox** lub **Kiwi**. Warunek: musisz być w niej **zalogowany do Steam**
+(skrypt korzysta z Twojej sesji). Na iOS/Safari słabo — pomiń.
+
 **Instalacja:**
 
 1. Zainstaluj menedżer userscriptów **Violentmonkey** z oficjalnej strony

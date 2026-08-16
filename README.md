@@ -58,7 +58,8 @@ bot nigdy nie robi tego za Ciebie.
 - 🧹 **Usuń moje dane** — jeden przycisk kasuje z komputera wszystko, co program zapisał
   (logowanie, cache cen, raport diagnostyczny).
 - 🦊 **Wersja przeglądarkowa (userscript)** — wystawianie duplikatów wprost z Firefoksa/Chrome,
-  w zalogowanej sesji, bez instalowania apki (`steam_autosell.user.js`).
+  w zalogowanej sesji, bez instalowania apki (`steam_autosell.user.js`); ekwipunek, typy
+  i konkretne pozycje wybierasz klikając w panelu.
 - 🧪 **Ten sam silnik w CLI** — dobry do crona; wbudowany `--selftest`.
 
 ---
@@ -133,14 +134,25 @@ Androidzie **Firefox** lub **Kiwi**. Warunek: musisz być w niej **zalogowany do
    pokaże stronę instalacji, kliknij **„Zainstaluj"**.
 
 **Użycie:** wejdź na swoją stronę ekwipunku (`steamcommunity.com/id/<ty>/inventory/`)
-— w prawym dolnym rogu pojawi się panel:
+— w prawym dolnym rogu pojawi się panel. Nic nie trzeba edytować w pliku, wszystko
+klikasz:
 
-1. **Podgląd (dry-run)** — pokazuje, co i za ile *by* wystawił; nic nie wystawia.
-2. **Wystaw duplikaty** — wystawia oferty (czekające na potwierdzenie), z odstępem między nimi.
-3. Apka Steam Mobile → **Potwierdzenia → Zatwierdź wszystko** (skrypt **nie** potwierdza).
+1. **Ekwipunek** — przyciski: *Karty Steam (753/6)*, *TF2*, *CS2*, *Dota 2*.
+2. **Co sprzedać** — przyciski typów: *Karty*, *Emotikony*, *Tła profilu*, *Boostery*
+   (można kilka naraz) albo *Wszystkie marketable*; obok pole na **filtr własny**
+   (po przecinku, np. `Emoticon, Rare`).
+3. **Undercut** (gr) i **odstęp** (s) — dwa pola obok przycisku **Skanuj duplikaty**.
+4. **Skanuj duplikaty** — wczytuje ekwipunek i wycenia całość hurtem, a potem pokazuje
+   **listę duplikatów**: ✓ zaznaczasz, co sprzedać, i ustawiasz **ile sztuk** z każdej
+   pozycji (jeden egzemplarz zawsze zostaje u Ciebie). Na dole widzisz, ile łącznie
+   dostaniesz.
+5. **Podgląd** — wypisuje w zakładce *Log*, co i za ile *by* wystawił; nic nie wystawia.
+6. **Wystaw zaznaczone** — po potwierdzeniu w panelu wystawia **tylko zaznaczone**
+   pozycje, z odstępem między nimi; w trakcie możesz przerwać przyciskiem **Stop**.
+7. Apka Steam Mobile → **Potwierdzenia → Zatwierdź wszystko** (skrypt **nie** potwierdza).
 
-Ustawienia na górze pliku: `APP` (`753/6`=karty, `440/2`=TF2, `730/2`=CS2, `570/2`=Dota2),
-`TYPES`, `UNDERCUT`, `DELAY_MS`.
+Panel można przeciągnąć za belkę tytułową i zwinąć przyciskiem „–"; wybrany ekwipunek,
+typy, undercut i odstęp zapamiętują się w przeglądarce do następnego razu.
 
 > Przydatne, gdy przymulone IP blokuje pobieranie cen w wersji desktopowej — przeglądarka
 > robi to łagodnie, w sesji, więc przechodzi. Samą **wycenę** (bez logowania) odpalisz też

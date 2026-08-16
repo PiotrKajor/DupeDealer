@@ -40,7 +40,9 @@
     { id: 'cs2', label: 'CS2', appid: '730', contextid: '2', types: [] },
     { id: 'dota2', label: 'Dota 2', appid: '570', contextid: '2', types: [] },
   ];
-  const MULTISELL_BATCH = 40;   // ile nazw na jedno żądanie wyceny
+  const MULTISELL_BATCH = 40;      // ile nazw na jedno żądanie wyceny
+  const MULTISELL_GAP_MS = 400;    // odstęp między żądaniami wyceny
+  const MULTISELL_MAX_REQ = 80;    // twardy limit żądań wyceny na jeden skan
   const STORE_KEY = 'dupedealer_userscript_settings_v1';
   // ---------------------------------------------------------------------------
 
@@ -160,35 +162,89 @@
 
   function parseMultisell(html, requested) {
     // Nazwy i ceny w dwóch osobnych blokach, powiązane WYŁĄCZNIE kolejnością.
-    // Jak długości/zestawy się nie zgadzają — zwracamy pustkę, żeby nie wystawić
-    // karty po cudzej cenie (zgadywanie = realna strata).
+    // Jak długości/zestawy się nie zgadzają — odrzucamy paczkę, żeby nie wystawić
+    // przedmiotu po cudzej cenie (zgadywanie = realna strata). Zamiast cichej
+    // pustki zwracamy powód: `global` to problem ze stroną (nie ma sensu dzielić
+    // paczki), reszta to niedopasowanie nazw — wtedy dzielimy paczkę na pół i
+    // cenę traci tylko ta nazwa, która faktycznie sprawia kłopot.
     const names = [...html.matchAll(/"market_hash_name":"((?:[^"\\]|\\.)*)"/g)]
       .map(m => JSON.parse('"' + m[1] + '"'));
     const prices = [...html.matchAll(/name="sell_\d+_price_paid"[^>]*?value="([^"]*)"/g)]
       .map(m => m[1]);
-    if (!names.length || names.length !== prices.length) return {};
+    // Brak NAZW = to nie jest strona multisella (wylogowanie/przekierowanie/zły
+    // appid) — dzielenie paczki nic tu nie da. Nazwy bez cen to już problem
+    // konkretnych pozycji: rynek części rzeczy po prostu nie wycenia hurtem.
+    if (!names.length) {
+      return { ok: false, global: true, reason: 'to nie jest strona multisell (wylogowanie, przekierowanie albo zły appid/contextid)' };
+    }
+    if (!prices.length) {
+      return { ok: false, reason: 'rynek nie wycenia hurtem tej pozycji' };
+    }
+    if (names.length !== prices.length) {
+      return { ok: false, reason: `${names.length} nazw ≠ ${prices.length} cen na stronie` };
+    }
     const reqSet = new Set(requested), nameSet = new Set(names);
-    if (reqSet.size !== nameSet.size || [...reqSet].some(n => !nameSet.has(n))) return {};
+    const missing = [...reqSet].filter(n => !nameSet.has(n));
+    if (missing.length || reqSet.size !== nameSet.size) {
+      const sample = missing.slice(0, 2).join(', ');
+      return {
+        ok: false,
+        reason: missing.length
+          ? `nie ma na stronie: ${sample}${missing.length > 2 ? ` (+${missing.length - 2})` : ''}`
+          : `strona zwróciła ${nameSet.size} nazw zamiast ${reqSet.size}`,
+      };
+    }
     const out = {};
     for (let i = 0; i < names.length; i++) {
       const c = parsePrice(prices[i]);
       if (c) { out[names[i]] = c; state.currency = detectCurrency(prices[i]); }
     }
-    return out;
+    return { ok: true, prices: out };
+  }
+
+  async function multisellChunk(chunk) {
+    const app = currentApp();
+    const params = new URLSearchParams({ appid: app.appid, contextid: app.contextid });
+    for (const n of chunk) params.append('items[]', n);
+    const r = await fetch('https://steamcommunity.com/market/multisell?' + params.toString(),
+      { credentials: 'include' });
+    if (r.status === 429) throw new Error('429 na wycenie (multisell) — poczekaj chwilę');
+    if (r.status < 200 || r.status >= 300) throw new Error(`multisell odpowiedział HTTP ${r.status}`);
+    return parseMultisell(await r.text(), chunk);
   }
 
   async function fetchPrices(names, onProgress) {
-    const app = currentApp();
+    // Paczka odrzucona przez niedopasowanie nazw nie kasuje już cen wszystkim —
+    // tniemy ją na pół, aż winowajca zostanie sam i tylko on zostanie bez ceny.
     const out = {};
-    for (let i = 0; i < names.length; i += MULTISELL_BATCH) {
-      const chunk = names.slice(i, i + MULTISELL_BATCH);
-      const params = new URLSearchParams({ appid: app.appid, contextid: app.contextid });
-      for (const n of chunk) params.append('items[]', n);
-      const r = await fetch('https://steamcommunity.com/market/multisell?' + params.toString(),
-        { credentials: 'include' });
-      if (r.status === 429) throw new Error('429 na wycenie (multisell) — poczekaj chwilę');
-      Object.assign(out, parseMultisell(await r.text(), chunk));
-      if (onProgress) onProgress(Math.min(i + MULTISELL_BATCH, names.length), names.length);
+    const queue = [];
+    for (let i = 0; i < names.length; i += MULTISELL_BATCH) queue.push(names.slice(i, i + MULTISELL_BATCH));
+
+    let done = 0, requests = 0, first = true;
+    while (queue.length) {
+      if (requests >= MULTISELL_MAX_REQ) {
+        log(`  ! limit ${MULTISELL_MAX_REQ} żądań wyceny — reszta bez ceny`, 'warn');
+        break;
+      }
+      if (!first) await sleep(MULTISELL_GAP_MS);
+      first = false;
+      const chunk = queue.shift();
+      requests++;
+      const res = await multisellChunk(chunk);
+
+      if (res.ok) {
+        Object.assign(out, res.prices);
+        done += chunk.length;
+      } else if (res.global) {
+        throw new Error(res.reason);          // dzielenie paczki tu nie pomoże
+      } else if (chunk.length === 1) {
+        log(`  ! ${chunk[0]} — bez ceny (${res.reason})`, 'warn');
+        done++;
+      } else {
+        const mid = Math.ceil(chunk.length / 2);
+        queue.unshift(chunk.slice(0, mid), chunk.slice(mid));
+      }
+      if (onProgress) onProgress(done, names.length);
     }
     return out;
   }
@@ -249,9 +305,15 @@
       }
       recompute();
       rows.sort((a, b) => (b.receive * b.sell) - (a.receive * a.sell));
-      if (noPrice) log(`Bez ceny (pomijam): ${noPrice}`, 'warn');
-      log('Zaznacz/odznacz pozycje na liście i kliknij „Wystaw zaznaczone".', 'dim');
-      showTab('list');
+      log(`Wyceniono ${rows.length - noPrice} z ${rows.length} nazw${noPrice ? `, bez ceny: ${noPrice}` : ''}.`,
+        noPrice ? 'warn' : 'good');
+      if (noPrice === rows.length) {
+        log('Żadna pozycja nie ma ceny — pozycje bez ceny są zablokowane, żeby nie wystawić ich po zgadywanej kwocie.', 'bad');
+        log('Powody odrzuceń masz wyżej w logu. Rynek Steam nie wycenia hurtem części przedmiotów (np. skrzynek czy rzeczy niezbywalnych).', 'dim');
+      } else {
+        log('Zaznacz/odznacz pozycje na liście i kliknij „Wystaw zaznaczone".', 'dim');
+      }
+      showTab(noPrice === rows.length ? 'log' : 'list');
     } catch (e) {
       log('Przerwane: ' + e.message, 'bad');
     } finally {

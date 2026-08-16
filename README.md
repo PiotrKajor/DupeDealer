@@ -6,9 +6,12 @@
 
 **Wystawia duplikaty kart i przedmiotów Steam na rynku — zawsze zostawiając po jednej sztuce każdego rodzaju.**
 
-Aplikacja okienkowa na Windows i skrypt CLI. Bez przeglądarki, na czystym `requests`.
+Aplikacja okienkowa na Windows i skrypt CLI — bez przeglądarki, na czystym `requests`.
+Do tego **wersja przeglądarkowa (userscript)**, gdy wolisz działać w zalogowanej sesji Steama.
 
 [![Pobierz .exe](https://img.shields.io/badge/Pobierz-DupeDealer.exe-4fb4ff?style=for-the-badge)](../../releases/latest)
+&nbsp;
+[![Zainstaluj userscript](https://img.shields.io/badge/Zainstaluj-userscript-ffb454?style=for-the-badge)](../../raw/master/steam_autosell.user.js)
 &nbsp;
 ![Platforma](https://img.shields.io/badge/Windows-64--bit-2a3245?style=for-the-badge)
 &nbsp;
@@ -130,8 +133,11 @@ Androidzie **Firefox** lub **Kiwi**. Warunek: musisz być w niej **zalogowany do
 1. Zainstaluj menedżer userscriptów **Violentmonkey** z oficjalnej strony
    [violentmonkey.github.io](https://violentmonkey.github.io/) — kliknij przycisk swojej
    przeglądarki (Firefox/Chrome/Edge) → w sklepie **„Dodaj do…"**.
-2. Otwórz [`steam_autosell.user.js`](../../raw/master/steam_autosell.user.js) — Violentmonkey
+2. Kliknij [**Zainstaluj userscript**](../../raw/master/steam_autosell.user.js) (ten sam plik
+   co [`steam_autosell.user.js`](../../raw/master/steam_autosell.user.js) w repo) — Violentmonkey
    pokaże stronę instalacji, kliknij **„Zainstaluj"**.
+3. Aktualizacje: skrypt ma w nagłówku `@updateURL`, więc menedżer sam sprawdza nowe
+   wersje pod tym adresem — nic nie trzeba przeinstalowywać.
 
 **Użycie:** wejdź na swoją stronę ekwipunku (`steamcommunity.com/id/<ty>/inventory/`)
 — w prawym dolnym rogu pojawi się panel. Nic nie trzeba edytować w pliku, wszystko

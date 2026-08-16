@@ -5,6 +5,10 @@
 // @description  Wystawia duplikaty kart/przedmiotów Steam z poziomu przeglądarki, w Twojej sesji. Wybierasz ekwipunek, typy i konkretne pozycje klikając w panelu. Wycena hurtem (multisell), odstęp między ofertami. NIE potwierdza — potwierdzasz w apce Steam Mobile.
 // @match        https://steamcommunity.com/id/*/inventory*
 // @match        https://steamcommunity.com/profiles/*/inventory*
+// @homepageURL  https://github.com/PiotrKajor/DupeDealer
+// @supportURL   https://github.com/PiotrKajor/DupeDealer/issues
+// @downloadURL  https://github.com/PiotrKajor/DupeDealer/raw/master/steam_autosell.user.js
+// @updateURL    https://github.com/PiotrKajor/DupeDealer/raw/master/steam_autosell.user.js
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
